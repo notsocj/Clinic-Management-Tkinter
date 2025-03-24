@@ -1,17 +1,21 @@
 import sqlite3
 
-def delete_patient(patient_name):
-    conn = sqlite3.connect("Login.db")  
+def get_patients():
+    conn = sqlite3.connect("Login.db")  # Connect to the database
     cursor = conn.cursor()
-    
-    # Execute DELETE statement
-    cursor.execute("DELETE FROM Patients WHERE name = ?", (patient_name,))
-    
-    # Commit and close
-    conn.commit()
+
+    # Execute SELECT statement
+    cursor.execute("SELECT * FROM Patients")
+
+    # Fetch all results
+    patients = cursor.fetchall()
+
+    # Close connection
     conn.close()
-    
-    print(f"Patient '{patient_name}' deleted successfully.")
+
+    # Print results
+    for patient in patients:
+        print(patient)
 
 # Example usage
-delete_patient("")
+get_patients()

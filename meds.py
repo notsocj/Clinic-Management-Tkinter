@@ -3,10 +3,15 @@ from tkinter import ttk, messagebox
 import tkcalendar  # Add this import for the calendar widget
 from db_helper import DatabaseHelper
 from medicine_select import MedicineSelector
+from medical_certificate import MedicalCertificateWindow  # Import the new class
 import sqlite3
-from ttkwidgets.autocomplete import AutocompleteCombobox
 from datetime import datetime, date
 from tkcalendar import Calendar  # Change from DateEntry to Calendar
+from medication_management import MedicationManagementWindow
+import os
+import tempfile
+import subprocess
+from PIL import Image, ImageDraw, ImageFont
 
 # Main Application Window
 root = tk.Tk()
@@ -64,7 +69,7 @@ def save_record():
         existing_patient = db.get_patient_by_name(patient_name)
         patient_id = None
         
-        if existing_patient:
+        if (existing_patient):
             response = messagebox.askyesno(
                 "Patient Exists", 
                 f"Patient '{patient_name}' already exists. Do you want to add a new checkup record?",
@@ -80,44 +85,54 @@ def save_record():
                 patient_name,
                 entry_address.get(),
                 selected_date.get(),  # Using selected_date instead of birthdate_cal
-                entry_age.get(),  # not saved to DB
                 entry_phone.get(),
                 status_var.get(),
-                "",  # occupation
-                "",  # referred
-                gender_var.get(),
-                entry_phone.get()  # phone
+                gender_var.get()
             )
             patient_id = db.add_patient(patient_data)
         
-        # Save checkup data
+        # Save checkup data - updated to match database structure
         current_date = datetime.now().strftime('%Y-%m-%d')
         checkup_data = (
             patient_id,
-            current_date,  # dateOfVisit
+            text_remarks.get("1.0", tk.END),  # Use remarks as findings
             "",          # lab_ids
-            text_findings.get("1.0", tk.END),
+            current_date,  # dateOfVisit
             current_date,  # last_checkup_date
             entry_bp.get()  # blood_pressure
         )
         
         checkup_id = db.add_checkup(checkup_data)
         
-        # Save prescriptions
+        # Save prescriptions with updated format
         for item in tree_med.get_children():
             values = tree_med.item(item)['values']
             prescription_data = (
                 patient_id,
                 values[1],  # generic
                 values[0],  # brand
-                values[4],  # quantity
-                values[3],  # administration/frequency
+                values[2],  # quantity
+                values[3],  # administration
                 current_date  # last_checkup_date
             )
             db.add_prescription(prescription_data)
             
+        # Display a success message
         messagebox.showinfo("Success", "Record saved successfully!")
-        clear_form()
+        
+        # Keep the patient name for refreshing
+        saved_patient_name = patient_name
+        
+        # Refresh the patient list and keep the current patient selected
+        refresh_patient_list(saved_patient_name)
+        
+        # Show a visual confirmation that data is refreshed
+        status_label = tk.Label(frame_patient, text="✓ Patient list refreshed", 
+                              bg=ACCENT_COLOR, fg="white", font=("Arial", 10))
+        status_label.grid(row=5, column=0, columnspan=4, padx=5, pady=5, sticky="ew")
+        
+        # Remove the status label after 3 seconds
+        root.after(3000, status_label.destroy)
         
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred: {str(e)}")
@@ -125,15 +140,13 @@ def save_record():
 def update_record():
     messagebox.showinfo("Update", "Record updated successfully!")
 
-def clear_form():
+def clear_form(show_message=True):
     # Clear all entry fields and text widgets
     entry_name.delete(0, tk.END)
     entry_address.delete(0, tk.END)
     entry_age.delete(0, tk.END)
     entry_phone.delete(0, tk.END)
     entry_bp.delete(0, tk.END)
-    text_complaints.delete("1.0", tk.END)
-    text_findings.delete("1.0", tk.END)
     text_remarks.delete("1.0", tk.END)
     # Clear medications treeview
     for item in tree_med.get_children():
@@ -141,20 +154,225 @@ def clear_form():
     # Reset comboboxes and radiobuttons
     status_var.set("")
     gender_var.set("")
-    frequency_var.set("")
     selected_date.set(datetime.now().strftime('%Y-%m-%d'))
-    messagebox.showinfo("Clear", "Form cleared successfully!")
+        # Show message only if show_message is True
+    if show_message:
+        messagebox.showinfo("Clear", "Form cleared successfully!")
 
 def delete_record():
-    response = messagebox.askyesno("Delete", "Are you sure you want to delete this record?")
+    # Check if a patient is selected
+    patient_name = entry_name.get()
+    if not patient_name:
+        messagebox.showwarning("Selection Error", "Please select a patient to delete.")
+        return
+    
+    # Check if patient exists in the database
+    if patient_name not in patient_dict:
+        messagebox.showwarning("Patient Not Found", f"Patient '{patient_name}' not found in the database.")
+        return
+    
+    # Get patient ID
+    patient_id = patient_dict[patient_name]
+    
+    # Confirm deletion with the user
+    response = messagebox.askyesno(
+        "Confirm Deletion", 
+        f"Are you sure you want to delete ALL records for patient '{patient_name}'?\n\nThis action cannot be undone and will delete:\n- Patient information\n- All checkup records\n- All prescription history",
+        icon='warning'
+    )
+    
     if response:
-        messagebox.showinfo("Delete", "Record deleted successfully!")
+        try:
+            db = DatabaseHelper()
+            db.delete_patient(patient_id)
+            messagebox.showinfo("Success", f"Patient '{patient_name}' and all related records have been deleted.")
+            
+            # Clear the form
+            clear_form()
+            
+            # Refresh the patient list
+            refresh_patient_list()
+            
+            # Show a visual confirmation
+            status_label = tk.Label(frame_patient, text="✓ Patient deleted and list refreshed", 
+                                  bg=WARNING_COLOR, fg="white", font=("Arial", 10))
+            status_label.grid(row=5, column=0, columnspan=4, padx=5, pady=5, sticky="ew")
+            
+            # Remove the status label after 3 seconds
+            root.after(3000, status_label.destroy)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred while deleting the patient: {str(e)}")
 
 def open_med_cert():
-    messagebox.showinfo("Medical Certificate", "Medical Certificate module will open here!")
+    # Check if a patient is selected
+    if not entry_name.get():
+        messagebox.showwarning("Warning", "Please select a patient first.")
+        return
+    
+    # Gather patient data from the current form
+    patient_data = {
+        "name": entry_name.get(),
+        "age": entry_age.get(),
+        "address": entry_address.get(),
+        "findings": "",
+        "remarks": text_remarks.get("1.0", tk.END).strip()  # Get the content from remarks field
+    }
+    
+    # Create and open the medical certificate window
+    med_cert_window = MedicalCertificateWindow(root, patient_data)
 
 def open_lab_charts():
     messagebox.showinfo("Lab/Charts", "Lab and Charts module will open here!")
+
+def open_print_dialog():
+    """Open a print dialog window to print prescription or findings"""
+    # Check if a patient is selected
+    if not entry_name.get():
+        messagebox.showwarning("Warning", "Please select a patient first.")
+        return
+    
+    # Create a print dialog window
+    print_dialog = tk.Toplevel(root)
+    print_dialog.title("Print Document")
+    print_dialog.geometry("400x300")
+    print_dialog.configure(bg=SECONDARY_COLOR)
+    print_dialog.resizable(False, False)
+    
+    # Create the content frame
+    content_frame = tk.Frame(print_dialog, bg=SECONDARY_COLOR, padx=20, pady=15)
+    content_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Print type selection
+    tk.Label(content_frame, text="Print Type:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold")).grid(row=0, column=0, padx=5, pady=10, sticky="w")
+    print_type_var = tk.StringVar(value="Prescription")
+    print_type_combo = ttk.Combobox(content_frame, textvariable=print_type_var, width=20, state="readonly", values=["Prescription", "Findings"])
+    print_type_combo.grid(row=0, column=1, padx=5, pady=10, sticky="w")
+    
+    # Preview area
+    preview_frame = tk.LabelFrame(content_frame, text="Print Preview", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold"), padx=10, pady=10)
+    preview_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky="nsew")
+    content_frame.grid_rowconfigure(1, weight=1)
+    content_frame.grid_columnconfigure(0, weight=1)
+    content_frame.grid_columnconfigure(1, weight=1)
+    
+    preview_text = tk.Text(preview_frame, wrap=tk.WORD, width=40, height=10, bg="white", fg=TEXT_COLOR)
+    preview_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    
+    # Function to update preview based on selected print type
+    def update_preview(*args):
+        preview_text.delete(1.0, tk.END)
+        selected_type = print_type_var.get()
+        
+        # Patient name at the top
+        preview_text.insert(tk.END, f"Patient: {entry_name.get()}\n\n")
+        
+        if selected_type == "Prescription":
+            # Format prescription data
+            prescription_text = get_formatted_prescription(entry_name.get())
+            preview_text.insert(tk.END, prescription_text)
+        else:  # Findings
+            # Get the findings/remarks
+            findings_text = text_remarks.get("1.0", tk.END).strip()
+            preview_text.insert(tk.END, findings_text)
+    
+    # Bind the update_preview function to combobox selection changes
+    print_type_combo.bind("<<ComboboxSelected>>", update_preview)
+    
+    # Button frame
+    button_frame = tk.Frame(print_dialog, bg=SECONDARY_COLOR, padx=20, pady=15)
+    button_frame.pack(fill=tk.X)
+    
+    # Print button
+    print_button = tk.Button(button_frame, text="Print", bg=ACCENT_COLOR, fg=BUTTON_TEXT_COLOR, 
+                           font=("Arial", 10, "bold"), padx=20, pady=8, 
+                           command=lambda: print_document(print_type_var.get()))
+    print_button.pack(side=tk.RIGHT, padx=5)
+    
+    # Cancel button
+    cancel_button = tk.Button(button_frame, text="Cancel", bg=WARNING_COLOR, fg=BUTTON_TEXT_COLOR,
+                            font=("Arial", 10, "bold"), padx=20, pady=8, 
+                            command=print_dialog.destroy)
+    cancel_button.pack(side=tk.RIGHT, padx=5)
+    
+    # Update the preview with default selection
+    update_preview()
+    
+    # Center the window
+    print_dialog.update_idletasks()
+    width = print_dialog.winfo_width()
+    height = print_dialog.winfo_height()
+    x = (print_dialog.winfo_screenwidth() // 2) - (width // 2)
+    y = (print_dialog.winfo_screenheight() // 2) - (height // 2)
+    print_dialog.geometry(f"{width}x{height}+{x}+{y}")
+    
+    # Make dialog modal
+    print_dialog.transient(root)
+    print_dialog.grab_set()
+
+def get_formatted_prescription(patient_name):
+    """Format prescription data for printing"""
+    formatted_text = ""
+    
+    # Get current date
+    current_date = datetime.now().strftime("%B %d, %Y")
+    formatted_text += f"Date: {current_date}\n\n"
+    
+    # Check if there are medications
+    if tree_med.get_children():
+        formatted_text += "Rx:\n\n"
+        
+        # Add each medication to the formatted text
+        for item in tree_med.get_children():
+            values = tree_med.item(item)['values']
+            brand = values[0]
+            generic = values[1]
+            quantity = values[2]
+            admin = values[3]
+            
+            formatted_text += f"{generic} ({brand})\n"
+            formatted_text += f"Quantity: {quantity}\n"
+            formatted_text += f"Administration: {admin}\n\n"
+    else:
+        formatted_text += "No medications prescribed."
+    
+    return formatted_text
+
+def print_document(print_type):
+    """Handle the actual printing process"""
+    try:
+        # Determine what to print based on the type
+        if print_type == "Prescription":
+            content = get_formatted_prescription(entry_name.get())
+        else:  # Findings
+            content = text_remarks.get("1.0", tk.END).strip()
+        
+        # Create a temporary file for printing
+        fd, path = tempfile.mkstemp(suffix='.txt')
+        try:
+            with os.fdopen(fd, 'w') as temp:
+                # Add patient name at the top
+                temp.write(f"Patient: {entry_name.get()}\n\n")
+                temp.write(content)
+            
+            # Open the file with the default application and print
+            if os.name == 'nt':  # Windows
+                os.startfile(path, "print")
+            else:  # macOS and Linux
+                subprocess.call(['lpr', path])
+                
+            messagebox.showinfo("Print", "Document sent to printer.")
+        finally:
+            # Clean up the temp file after a delay to allow printing
+            def cleanup():
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+            root.after(10000, cleanup)  # 10 seconds delay
+            
+    except Exception as e:
+        messagebox.showerror("Print Error", f"Failed to print: {str(e)}")
 
 # Sidebar buttons
 btn_save = create_sidebar_button("Save Record", save_record, ACCENT_COLOR)
@@ -162,6 +380,7 @@ btn_update = create_sidebar_button("Update Record", update_record, PRIMARY_COLOR
 btn_clear = create_sidebar_button("Clear Form", clear_form, PRIMARY_COLOR)
 btn_delete = create_sidebar_button("Delete Record", delete_record, WARNING_COLOR)
 ttk.Separator(sidebar).pack(fill=tk.X, padx=10, pady=5)
+btn_print = create_sidebar_button("Print", open_print_dialog, PRIMARY_COLOR)  # Add print button
 btn_med_cert = create_sidebar_button("Medical Certificate", open_med_cert, PRIMARY_COLOR)
 btn_lab = create_sidebar_button("Lab/Charts", open_lab_charts, PRIMARY_COLOR)
 
@@ -175,7 +394,7 @@ frame_patient.place(x=10, y=10, width=650, height=320)
 
 # Left column of patient info
 tk.Label(frame_patient, text="Name:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=0, column=0, padx=5, pady=5, sticky="w")
-entry_name = AutocompleteCombobox(frame_patient, width=37)
+entry_name = ttk.Combobox(frame_patient, width=37)
 entry_name.grid(row=0, column=1, padx=5, pady=5)
 
 tk.Label(frame_patient, text="Address:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, padx=5, pady=5, sticky="w")
@@ -223,6 +442,18 @@ tk.Label(frame_patient, text="Phone:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(r
 entry_phone = ttk.Entry(frame_patient, width=20)
 entry_phone.grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
+# Blood Pressure moved below Phone
+tk.Label(frame_patient, text="Blood Pressure:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=4, column=0, padx=5, pady=5, sticky="w")
+entry_bp = ttk.Entry(frame_patient, width=15)
+entry_bp.grid(row=4, column=1, padx=5, pady=5, sticky="w")
+
+# Add this after the Blood Pressure field in the patient information section
+tk.Label(frame_patient, text="Checkup History:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=5, column=0, padx=5, pady=5, sticky="w")
+checkup_history_var = tk.StringVar()
+checkup_history_dropdown = ttk.Combobox(frame_patient, textvariable=checkup_history_var, width=25, state="readonly")
+checkup_history_dropdown.grid(row=5, column=1, padx=5, pady=5, sticky="w")
+checkup_history_dropdown.bind("<<ComboboxSelected>>", lambda e: load_checkup_details())
+
 # Right column of patient info
 tk.Label(frame_patient, text="Civil Status:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=0, column=2, padx=5, pady=5, sticky="w")
 status_var = tk.StringVar()
@@ -234,19 +465,6 @@ tk.Label(frame_patient, text="Gender:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(
 gender_var = tk.StringVar()
 ttk.Radiobutton(frame_patient, text="Male", variable=gender_var, value="Male").grid(row=1, column=3, sticky="w")
 ttk.Radiobutton(frame_patient, text="Female", variable=gender_var, value="Female").grid(row=1, column=3, padx=(70, 0), sticky="w")
-
-tk.Label(frame_patient, text="Blood Pressure:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=2, column=2, padx=5, pady=5, sticky="w")
-entry_bp = ttk.Entry(frame_patient, width=15)
-entry_bp.grid(row=2, column=3, padx=5, pady=5, sticky="w")
-
-# Medical information section
-tk.Label(frame_patient, text="Complaints:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=4, column=0, padx=5, pady=5, sticky="nw")
-text_complaints = tk.Text(frame_patient, width=40, height=3)
-text_complaints.grid(row=4, column=1, padx=5, pady=5, sticky="w")
-
-tk.Label(frame_patient, text="Findings:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=5, column=0, padx=5, pady=5, sticky="nw")
-text_findings = tk.Text(frame_patient, width=40, height=3)
-text_findings.grid(row=5, column=1, padx=5, pady=5, sticky="w")
 
 # ----------------- Queue System ----------------- #
 frame_queue = tk.LabelFrame(content_frame, text="TODAY'S QUEUE", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 12, "bold"))
@@ -288,6 +506,8 @@ def add_to_queue():
         try:
             db = DatabaseHelper()
             db.add_to_queue((queue_counter, name, current_time))
+            # Refresh patient list after adding to queue
+            refresh_patient_list(name)
         except Exception as e:
             messagebox.showerror("Error", f"Could not save to queue: {str(e)}")
     else:
@@ -322,91 +542,62 @@ remarks_scrollbar.place(relx=0.97, rely=0.05, relheight=0.9)
 frame_med = tk.LabelFrame(content_frame, text="PRESCRIPTION/MEDICATION", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 12, "bold"))
 frame_med.place(x=505, y=340, width=485, height=280)
 
-tree_med = ttk.Treeview(frame_med, columns=("Brand", "Generic", "Dosage", "Frequency", "Quantity"), show="headings", height=6)
+# Create treeview with updated columns
+tree_med = ttk.Treeview(frame_med, columns=("Brand", "Generic", "Quantity", "Administration"), show="headings", height=8)
 tree_med.heading("Brand", text="Brand Name")
 tree_med.heading("Generic", text="Generic Name")
-tree_med.heading("Dosage", text="Dosage")
-tree_med.heading("Frequency", text="Frequency")
 tree_med.heading("Quantity", text="Quantity")
-tree_med.column("Brand", width=90)
-tree_med.column("Generic", width=90)
-tree_med.column("Dosage", width=70)
-tree_med.column("Frequency", width=90)
-tree_med.column("Quantity", width=60)
+tree_med.heading("Administration", text="Administration")
+tree_med.column("Brand", width=120)
+tree_med.column("Generic", width=120)
+tree_med.column("Quantity", width=80)
+tree_med.column("Administration", width=120)
 tree_med.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
 # Add scrollbar to prescription
 med_scrollbar = ttk.Scrollbar(frame_med, orient="vertical", command=tree_med.yview)
 tree_med.configure(yscroll=med_scrollbar.set)
-med_scrollbar.place(relx=0.97, rely=0.05, relheight=0.5)
+med_scrollbar.place(relx=0.97, rely=0.05, relheight=0.7)
 
-# Medication input frame
-med_input_frame = tk.Frame(frame_med, bg=SECONDARY_COLOR)
-med_input_frame.pack(padx=5, pady=5, fill=tk.X)
+# Button frame for medication management
+med_button_frame = tk.Frame(frame_med, bg=SECONDARY_COLOR)
+med_button_frame.pack(padx=1, pady=1, fill=tk.X)
 
-# First row of medication inputs
-input_row1 = tk.Frame(med_input_frame, bg=SECONDARY_COLOR)
-input_row1.pack(fill=tk.X, pady=2)
-
-tk.Label(input_row1, text="Brand:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT, padx=5)
-entry_brand = ttk.Entry(input_row1, width=15)
-entry_brand.pack(side=tk.LEFT, padx=2)
-
-tk.Label(input_row1, text="Generic:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT, padx=5)
-entry_generic = ttk.Entry(input_row1, width=15)
-entry_generic.pack(side=tk.LEFT, padx=2)
-
-# Second row of medication inputs
-input_row2 = tk.Frame(med_input_frame, bg=SECONDARY_COLOR)
-input_row2.pack(fill=tk.X, pady=2)
-
-tk.Label(input_row2, text="Dosage:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT, padx=5)
-entry_dosage = ttk.Entry(input_row2, width=10)
-entry_dosage.pack(side=tk.LEFT, padx=2)
-
-tk.Label(input_row2, text="Qty:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT, padx=5)
-entry_quantity = ttk.Entry(input_row2, width=5)
-entry_quantity.pack(side=tk.LEFT, padx=2)
-
-tk.Label(input_row2, text="Freq:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT, padx=5)
-frequency_var = tk.StringVar()
-freq_options = ["Once daily", "Twice daily", "Three times daily", "Every 4 hours", "Every 6 hours", "As needed"]
-freq_dropdown = ttk.Combobox(input_row2, textvariable=frequency_var, values=freq_options, width=12)
-freq_dropdown.pack(side=tk.LEFT, padx=2)
-
-# Button row for medication
-button_row = tk.Frame(med_input_frame, bg=SECONDARY_COLOR)
-button_row.pack(fill=tk.X, pady=5)
-
-def add_medication():
-    med_selector = MedicineSelector(root)
-    root.wait_window(med_selector)
-    
-    if med_selector.selected_medicine:
-        med_id, brand, generic, med_type = med_selector.selected_medicine
-        dosage = entry_dosage.get()
-        frequency = frequency_var.get()
-        quantity = entry_quantity.get()
+def open_medication_management():
+    # Define callback function to receive medications from the management window
+    def update_medications(medications):
+        # Clear current medications in the tree
+        for item in tree_med.get_children():
+            tree_med.delete(item)
         
-        if dosage and frequency and quantity:
-            tree_med.insert("", "end", values=(brand, generic, dosage, frequency, quantity))
-            entry_dosage.delete(0, tk.END)
-            entry_quantity.delete(0, tk.END)
-            frequency_var.set("")
-        else:
-            messagebox.showwarning("Input Error", "Please fill all fields!")
+        # Add new medications
+        for med in medications:
+            tree_med.insert("", tk.END, values=(
+                med["brand"],
+                med["generic"],
+                med["quantity"],
+                med["administration"]
+            ))
+    
+    # Open medication management window
+    med_window = MedicationManagementWindow(root, callback=update_medications)
 
-def remove_medication():
+def remove_selected_medication():
     selected_item = tree_med.selection()
     if selected_item:
         tree_med.delete(selected_item)
     else:
         messagebox.showwarning("Selection Error", "Select a medication to remove!")
 
-btn_add_med = tk.Button(button_row, text="Add Medication", bg=ACCENT_COLOR, fg=BUTTON_TEXT_COLOR, padx=5, pady=2, command=add_medication)
-btn_add_med.pack(side=tk.LEFT, padx=5)
+# Add buttons for medication management
+btn_manage_meds = tk.Button(med_button_frame, text="Manage Medications", 
+                          bg=ACCENT_COLOR, fg=BUTTON_TEXT_COLOR, 
+                          padx=10, pady=5, command=open_medication_management)
+btn_manage_meds.pack(side=tk.LEFT, padx=5)
 
-btn_remove_med = tk.Button(button_row, text="Remove", bg=WARNING_COLOR, fg=BUTTON_TEXT_COLOR, padx=5, pady=2, command=remove_medication)
+btn_remove_med = tk.Button(med_button_frame, text="Remove Selected", 
+                          bg=WARNING_COLOR, fg=BUTTON_TEXT_COLOR, 
+                          padx=10, pady=5, command=remove_selected_medication)
 btn_remove_med.pack(side=tk.LEFT, padx=5)
 
 # Let's update the add_to_queue function to calculate age from birthdate
@@ -435,7 +626,8 @@ def load_patient_names():
     db = DatabaseHelper()
     patients = db.get_patients()
     patient_names = [patient[1] for patient in patients]
-    entry_name['completevalues'] = patient_names
+    patient_names.sort()  # Sort alphabetically
+    entry_name['values'] = patient_names
     return {name: id for id, name in patients}
 
 patient_dict = load_patient_names()
@@ -449,18 +641,81 @@ def on_name_select(event=None):
             # Clear existing fields
             entry_address.delete(0, tk.END)
             entry_phone.delete(0, tk.END)
+            entry_bp.delete(0, tk.END)
             
             # Fill in patient details from database
             entry_address.insert(0, patient[2])  # address
             # Convert string date to datetime before setting
-            date_obj = datetime.strptime(patient[3], '%Y-%m-%d')
-            selected_date.set(date_obj.strftime('%Y-%m-%d'))
+            try:
+                date_obj = datetime.strptime(patient[3], '%Y-%m-%d')
+                selected_date.set(date_obj.strftime('%Y-%m-%d'))
+            except:
+                selected_date.set(datetime.now().strftime('%Y-%m-%d'))
+                
             entry_phone.insert(0, patient[9])  # phone
             status_var.set(patient[5])  # civil_status 
             gender_var.set(patient[8])  # gender
             update_age()
+            
+            # Load most recent checkup info
+            try:
+                conn = db.get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT blood_pressure FROM Checkups 
+                    WHERE patient_id = ? 
+                    ORDER BY dateOfVisit DESC LIMIT 1
+                """, (patient_dict[selected_name],))
+                latest_bp = cursor.fetchone()
+                if (latest_bp and latest_bp[0]):
+                    entry_bp.insert(0, latest_bp[0])
+                conn.close()
+                
+                # Load checkup history for dropdown
+                load_checkup_history(patient_dict[selected_name])
+            except Exception as e:
+                print(f"Error loading patient data: {e}")
 
+# Add this function to check for exact name matches and show the dropdown
+def check_name_match(event=None):
+    current_text = entry_name.get().strip()
+    
+    # When text is empty or very short, show all patients
+    if len(current_text) < 1:
+        # Get the full sorted list of patient names
+        sorted_names = sorted(list(patient_dict.keys()))
+        entry_name['values'] = sorted_names
+        return
+        
+    # Get the list of matching patient names for filtering
+    matching_names = []
+    for name in patient_dict.keys():
+        if current_text.lower() in name.lower():
+            matching_names.append(name)
+    
+    # If we have matches, update the dropdown values
+    if matching_names:
+        # Sort the matching names for better user experience
+        matching_names.sort()
+        entry_name['values'] = matching_names
+        
+        # If there's an exact match, show the dropdown
+        exact_match = False
+        for name in matching_names:
+            if current_text.lower() == name.lower():
+                exact_match = True
+                break
+        
+        # Show dropdown on exact match
+        if exact_match:
+            entry_name.event_generate('<Down>')
+    else:
+        # If no matches, show a message in the dropdown
+        entry_name['values'] = ["No matches found"]
+
+# Now add the bindings after the functions are defined
 entry_name.bind('<<ComboboxSelected>>', on_name_select)
+entry_name.bind('<KeyRelease>', check_name_match)
 
 # Modify the queue system to allow editing
 def edit_queue_item(event=None):
@@ -471,7 +726,7 @@ def edit_queue_item(event=None):
         patient_name = values[1]
         
         # Clear current form
-        clear_form()
+        clear_form(show_message=False)
         
         # Set the patient name and trigger the selection event
         entry_name.set(patient_name)
@@ -520,5 +775,287 @@ def on_entry_focus_out(event):
 
 birthdate_entry.bind("<FocusIn>", on_entry_focus_in)
 birthdate_entry.bind("<FocusOut>", on_entry_focus_out)
+
+# Add this function to refresh the patient list
+def refresh_patient_list(keep_selection=None):
+    """
+    Refresh the patient dropdown list with current data from the database.
+    If keep_selection is provided, will maintain that patient as selected.
+    """
+    global patient_dict
+    # Store current selection if needed
+    current_selection = None
+    if keep_selection:
+        current_selection = keep_selection
+    elif entry_name.get():
+        current_selection = entry_name.get()
+    
+    # Reload patient names from database
+    patient_dict = load_patient_names()
+    
+    # Restore the selection if needed
+    if current_selection:
+        entry_name.set(current_selection)
+
+# Call refresh_patient_list after the window is loaded
+root.after(100, refresh_patient_list)
+
+# Add these new functions to handle checkup history
+def load_checkup_history(patient_id):
+    """Load the checkup history for a patient into the dropdown"""
+    try:
+        db = DatabaseHelper()
+        checkups = db.get_patient_checkups(patient_id)
+        
+        # Create a list of formatted dates for the dropdown
+        if checkups:
+            history_items = [f"{checkup[3]} - BP: {checkup[5] or 'Not recorded'}" for checkup in checkups]
+            checkup_history_dropdown['values'] = history_items
+            
+            # Store the checkup data for later use
+            global current_checkups
+            current_checkups = checkups
+            
+            # Select the most recent checkup
+            checkup_history_var.set(history_items[0] if history_items else "")
+        else:
+            checkup_history_dropdown['values'] = ["No previous checkups"]
+            checkup_history_var.set("No previous checkups")
+            current_checkups = []
+    except Exception as e:
+        print(f"Error loading checkup history: {e}")
+        checkup_history_dropdown['values'] = ["Error loading checkups"]
+        checkup_history_var.set("Error loading checkups")
+
+def load_checkup_details():
+    """Load the details of the selected checkup and display in a notification window"""
+    selected_checkup = checkup_history_var.get()
+    if not selected_checkup or selected_checkup in ["No previous checkups", "Error loading checkups"]:
+        return
+    
+    # Find the checkup record that matches the selected date
+    try:
+        selected_index = checkup_history_dropdown['values'].index(selected_checkup)
+        checkup = current_checkups[selected_index]
+        
+        # Display checkup details in a notification window
+        show_checkup_notification(checkup)
+        
+    except Exception as e:
+        print(f"Error loading checkup details: {e}")
+
+def show_checkup_notification(checkup):
+    """Display checkup details in a notification window"""
+    notification = tk.Toplevel(root)
+    notification.title("Checkup History Details")
+    notification.geometry("600x500")  # Larger window size
+    notification.configure(bg=SECONDARY_COLOR)
+    
+    # Get checkup details
+    checkup_id = checkup[0]
+    findings = checkup[1] or "No findings recorded"
+    lab_ids = checkup[2] or "No labs recorded"
+    checkup_date = checkup[3]
+    last_checkup_date = checkup[4]
+    blood_pressure = checkup[5] or "Not recorded"
+    
+    # Create header frame
+    header_frame = tk.Frame(notification, bg=PRIMARY_COLOR, padx=15, pady=10)
+    header_frame.pack(fill=tk.X)
+    
+    # Add header content
+    tk.Label(header_frame, text=f"Checkup Details - {checkup_date}", 
+             bg=PRIMARY_COLOR, fg="white", font=("Arial", 14, "bold")).pack(anchor="w")
+    
+    # Create main content frame with padding
+    main_frame = tk.Frame(notification, bg=SECONDARY_COLOR, padx=20, pady=15)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Patient details section if available
+    if entry_name.get() in patient_dict:
+        patient_id = patient_dict[entry_name.get()]
+        db = DatabaseHelper()
+        patient = db.get_patient_details(patient_id)
+        if patient:
+            patient_frame = tk.LabelFrame(main_frame, text="Patient Information", 
+                                       bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 11, "bold"),
+                                       padx=10, pady=10)
+            patient_frame.pack(fill=tk.X, pady=(0, 15))
+            
+            info_grid = tk.Frame(patient_frame, bg=SECONDARY_COLOR)
+            info_grid.pack(fill=tk.X)
+            
+            # Row 1
+            tk.Label(info_grid, text="Name:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, 
+                   font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 5), pady=2)
+            tk.Label(info_grid, text=patient[1], bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=0, column=1, sticky="w", padx=5, pady=2)
+            
+            tk.Label(info_grid, text="Gender:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, 
+                   font=("Arial", 10, "bold")).grid(row=0, column=2, sticky="w", padx=(20, 5), pady=2)
+            tk.Label(info_grid, text=patient[8], bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=0, column=3, sticky="w", padx=5, pady=2)
+            
+            # Row 2
+            tk.Label(info_grid, text="Age at checkup:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, 
+                   font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="w", padx=(0, 5), pady=2)
+            
+            # Calculate age at time of checkup
+            try:
+                birth_date = datetime.strptime(patient[3], '%Y-%m-%d').date()
+                checkup_datetime = datetime.strptime(checkup_date, '%Y-%m-%d').date()
+                age_at_checkup = checkup_datetime.year - birth_date.year - ((checkup_datetime.month, checkup_datetime.day) < (birth_date.month, birth_date.day))
+                tk.Label(info_grid, text=str(age_at_checkup), bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+            except:
+                tk.Label(info_grid, text="N/A", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+            
+            tk.Label(info_grid, text="Status:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, 
+                   font=("Arial", 10, "bold")).grid(row=1, column=2, sticky="w", padx=(20, 5), pady=2)
+            tk.Label(info_grid, text=patient[5] or "Not recorded", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=1, column=3, sticky="w", padx=5, pady=2)
+    
+    # Vital signs section
+    vitals_frame = tk.LabelFrame(main_frame, text="Vital Signs", 
+                                bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 11, "bold"),
+                                padx=10, pady=10)
+    vitals_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    vitals_grid = tk.Frame(vitals_frame, bg=SECONDARY_COLOR)
+    vitals_grid.pack(fill=tk.X)
+    
+    tk.Label(vitals_grid, text="Blood Pressure:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, 
+           font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 5), pady=5)
+    tk.Label(vitals_grid, text=blood_pressure, bg=SECONDARY_COLOR, fg=TEXT_COLOR,
+           font=("Arial", 10)).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+    
+    # Findings & Remarks with scrollable text
+    findings_frame = tk.LabelFrame(main_frame, text="Findings & Remarks", 
+                                 bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 11, "bold"),
+                                 padx=10, pady=10)
+    findings_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+    
+    # Create a frame to hold the text widget and scrollbar
+    text_container = tk.Frame(findings_frame, bg=SECONDARY_COLOR)
+    text_container.pack(fill=tk.BOTH, expand=True)
+    
+    # Text widget for findings with proper styling
+    findings_text = tk.Text(text_container, wrap=tk.WORD, width=60, height=8,
+                          font=("Arial", 10), padx=8, pady=8,
+                          bg="white", fg=TEXT_COLOR)
+    findings_text.insert("1.0", findings)
+    findings_text.config(state="disabled")  # Make read-only
+    
+    # Add scrollbar to findings text
+    text_scroll = ttk.Scrollbar(text_container, orient="vertical", command=findings_text.yview)
+    findings_text.configure(yscrollcommand=text_scroll.set)
+    
+    findings_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    # Try to get prescriptions for this checkup
+    try:
+        db = DatabaseHelper()
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Check if there are prescriptions with the same date
+        cursor.execute("""
+            SELECT brand, generic, quantity, administration
+            FROM Prescriptions 
+            WHERE patient_id = (
+                SELECT patient_id FROM Checkups WHERE id = ?
+            ) AND last_checkup_date = ?
+        """, (checkup_id, checkup_date))
+        
+        prescriptions = cursor.fetchall()
+        conn.close()
+        
+        # Add prescriptions section if there are any
+        if prescriptions:
+            rx_frame = tk.LabelFrame(main_frame, text="Prescribed Medications", 
+                                   bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 11, "bold"),
+                                   padx=10, pady=10)
+            rx_frame.pack(fill=tk.X, pady=(0, 15))
+            
+            # Create a container for the treeview and scrollbar
+            rx_container = tk.Frame(rx_frame, bg=SECONDARY_COLOR)
+            rx_container.pack(fill=tk.X, expand=True)
+            
+            # Create a treeview for prescriptions
+            rx_tree = ttk.Treeview(rx_container, columns=("Brand", "Generic", "Quantity", "Administration"), 
+                                  show="headings", height=min(len(prescriptions), 3))
+            rx_tree.heading("Brand", text="Brand Name")
+            rx_tree.heading("Generic", text="Generic Name")
+            rx_tree.heading("Quantity", text="Qty")
+            rx_tree.heading("Administration", text="Administration")
+            
+            rx_tree.column("Brand", width=150)
+            rx_tree.column("Generic", width=150)
+            rx_tree.column("Quantity", width=50)
+            rx_tree.column("Administration", width=150)
+            
+            # Add prescriptions to the tree
+            for rx in prescriptions:
+                rx_tree.insert("", tk.END, values=rx)
+            
+            # Add scrollbar to the treeview
+            rx_scroll = ttk.Scrollbar(rx_container, orient="vertical", command=rx_tree.yview)
+            rx_tree.configure(yscrollcommand=rx_scroll.set)
+            
+            rx_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            rx_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    except Exception as e:
+        print(f"Error loading prescriptions: {e}")
+    
+    # Button frame
+    button_frame = tk.Frame(notification, bg=SECONDARY_COLOR, padx=15, pady=15)
+    button_frame.pack(fill=tk.X)
+    
+    # Close button
+    close_button = tk.Button(button_frame, text="Close", bg=PRIMARY_COLOR, fg=BUTTON_TEXT_COLOR,
+                           font=("Arial", 10, "bold"), padx=20, pady=8, command=notification.destroy)
+    close_button.pack(side=tk.RIGHT, padx=10)
+    
+    # Copy to Remarks button
+    def copy_to_remarks():
+        text_remarks.delete("1.0", tk.END)
+        text_remarks.insert("1.0", findings)
+        # Show confirmation toast
+        confirmation = tk.Label(notification, text="✓ Copied to remarks", bg="green", fg="white", 
+                              font=("Arial", 10, "bold"), padx=10, pady=5)
+        confirmation.place(relx=0.5, rely=0.9, anchor="center")
+        notification.after(2000, confirmation.destroy)  # Remove after 2 seconds
+    
+    copy_button = tk.Button(button_frame, text="Use as Template", bg=ACCENT_COLOR, fg=BUTTON_TEXT_COLOR,
+                          font=("Arial", 10, "bold"), padx=20, pady=8, command=copy_to_remarks)
+    copy_button.pack(side=tk.RIGHT, padx=10)
+    
+    # Apply blood pressure button
+    def apply_bp():
+        entry_bp.delete(0, tk.END)
+        if blood_pressure and blood_pressure != "Not recorded":
+            entry_bp.insert(0, blood_pressure)
+        # Show confirmation toast
+        confirmation = tk.Label(notification, text="✓ Blood pressure applied", bg="green", fg="white", 
+                              font=("Arial", 10, "bold"), padx=10, pady=5)
+        confirmation.place(relx=0.5, rely=0.9, anchor="center")
+        notification.after(2000, confirmation.destroy)  # Remove after 2 seconds
+    
+    bp_button = tk.Button(button_frame, text="Apply BP", bg=PRIMARY_COLOR, fg=BUTTON_TEXT_COLOR,
+                        font=("Arial", 10, "bold"), padx=20, pady=8, command=apply_bp)
+    bp_button.pack(side=tk.RIGHT, padx=10)
+    
+    # Center the window on the screen
+    notification.update_idletasks()
+    width = notification.winfo_width()
+    height = notification.winfo_height()
+    x = (notification.winfo_screenwidth() // 2) - (width // 2)
+    y = (notification.winfo_screenheight() // 2) - (height // 2)
+    notification.geometry(f"{width}x{height}+{x}+{y}")
+    
+    # Make window modal
+    notification.transient(root)
+    notification.grab_set()
+    root.wait_window(notification)
+
+# Add a global variable to store current checkups data
+current_checkups = []
 
 root.mainloop()
