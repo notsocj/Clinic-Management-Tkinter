@@ -54,22 +54,27 @@ class DatabaseHelper:
     def add_checkup(self, checkup_data):
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO Checkups (patient_id, findings, lab_ids, dateOfVisit, 
-            last_checkup_date, blood_pressure)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            checkup_data[0],  # patient_id
-            checkup_data[1],  # findings (from remarks)
-            checkup_data[2],  # lab_ids
-            checkup_data[3],  # dateOfVisit
-            checkup_data[4],  # last_checkup_date same as visit date
-            checkup_data[5]   # blood_pressure - fixed to use the passed value
-        ))
-        checkup_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return checkup_id
+        try:
+            cursor.execute("""
+                INSERT INTO Checkups (patient_id, findings, lab_ids, dateOfVisit, 
+                last_checkup_date)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                checkup_data[0],  # patient_id
+                checkup_data[1],  # findings (from remarks)
+                checkup_data[2],  # lab_ids
+                checkup_data[3],  # dateOfVisit
+                checkup_data[4]   # last_checkup_date same as visit date
+            ))
+            checkup_id = cursor.lastrowid
+            conn.commit()
+            return checkup_id
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def add_prescription(self, prescription_data):
         conn = self.get_connection()

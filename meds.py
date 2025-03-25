@@ -99,7 +99,6 @@ def save_record():
             "",          # lab_ids
             current_date,  # dateOfVisit
             current_date,  # last_checkup_date
-            entry_bp.get()  # blood_pressure
         )
         
         checkup_id = db.add_checkup(checkup_data)
@@ -120,11 +119,8 @@ def save_record():
         # Display a success message
         messagebox.showinfo("Success", "Record saved successfully!")
         
-        # Keep the patient name for refreshing
-        saved_patient_name = patient_name
-        
         # Refresh the patient list and keep the current patient selected
-        refresh_patient_list(saved_patient_name)
+        refresh_patient_list(patient_name)
         
         # Show a visual confirmation that data is refreshed
         status_label = tk.Label(frame_patient, text="✓ Patient list refreshed", 
@@ -235,7 +231,7 @@ def open_print_dialog():
     # Create a print dialog window
     print_dialog = tk.Toplevel(root)
     print_dialog.title("Print Document")
-    print_dialog.geometry("400x300")
+    print_dialog.geometry("800x600")
     print_dialog.configure(bg=SECONDARY_COLOR)
     print_dialog.resizable(False, False)
     
@@ -283,7 +279,104 @@ def open_print_dialog():
     button_frame = tk.Frame(print_dialog, bg=SECONDARY_COLOR, padx=20, pady=15)
     button_frame.pack(fill=tk.X)
     
-    # Print button
+    # Define function to print as PDF
+    def print_document_as_pdf():
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            import tempfile
+            import os
+
+            # Get content based on print type
+            selected_type = print_type_var.get()
+            fd, pdf_path = tempfile.mkstemp(suffix='.pdf')
+            os.close(fd)
+            doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                                    rightMargin=72, leftMargin=72,
+                                    topMargin=72, bottomMargin=72)
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle('TitleStyle', parent=styles['Normal'], fontSize=14, spaceAfter=6, spaceBefore=6, fontName='Helvetica-Bold')
+            normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=11, spaceAfter=4, spaceBefore=4)
+            elements = []
+
+            current_date = datetime.now().strftime("%B %d, %Y")
+
+            patient_name = entry_name.get().upper()
+            patient_age = entry_age.get()
+            patient_address = entry_address.get()
+
+
+            # Create patient header as a table for proper alignment
+            patient_data = [[
+                Paragraph(f"<b>{patient_name}</b>", normal_style),
+                Paragraph(f"<b>AGE:</b> {patient_age}" if patient_age else "", normal_style)
+            ]]
+            patient_table = Table(patient_data, colWidths=[350, 100])  # Adjust column widths as needed
+            patient_table.setStyle(TableStyle([
+                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),  # Align age to the right
+                ('VALIGN', (0, 0), (-1, -1), 'TOP')  # Align text to the top
+            ]))
+
+            elements.append(patient_table)
+
+            # Add address below the name
+            if patient_address:
+                indent_style = ParagraphStyle('IndentStyle', parent=normal_style, leftIndent=30)
+                elements.append(Paragraph(patient_address, indent_style))
+
+            elements.append(Spacer(1, 12))  # Maintain spacing
+            elements.append(Spacer(1, 12))
+
+            if selected_type == "Prescription":
+                elements.append(Spacer(1, 20))
+
+                if tree_med.get_children():
+                    for idx, item in enumerate(tree_med.get_children()):
+                        values = tree_med.item(item)['values']
+                        brand = values[0]
+                        generic = values[1]
+                        quantity = values[2]
+                        admin = values[3]
+                        
+                        indent_style = ParagraphStyle('IndentStyle', parent=normal_style, leftIndent=60)
+
+                        elements.append(Paragraph(f"<b>{generic}</b>", indent_style))
+                        elements.append(Paragraph(f"{brand} #{quantity}", indent_style))
+                        elements.append(Paragraph(f"{admin}", indent_style))
+                     
+                        if idx < len(tree_med.get_children()) - 1:
+                            elements.append(Paragraph("------------------------------------------", indent_style))
+                        elements.append(Spacer(1, 6))
+                else:
+                    elements.append(Paragraph("No medications prescribed.", normal_style))
+            else:
+                elements.append(Paragraph("FINDINGS & REMARKS", title_style))
+                elements.append(Spacer(1, 12))
+
+                findings_text = text_remarks.get("1.0", tk.END).strip()
+                if findings_text:
+                    for line in findings_text.split('\n'):
+                        if line.strip():
+                            elements.append(Paragraph(line, normal_style))
+                            elements.append(Spacer(1, 6))
+                else:
+                    elements.append(Paragraph("No findings recorded.", normal_style))
+            
+            doc.build(elements)
+            os.startfile(pdf_path)
+        except Exception as e:
+            messagebox.showerror("PDF Error", f"Failed to create PDF: {str(e)}")
+
+    
+    # Print as PDF button
+    pdf_button = tk.Button(button_frame, text="Print as PDF", bg=PRIMARY_COLOR, fg=BUTTON_TEXT_COLOR, 
+                          font=("Arial", 10, "bold"), padx=20, pady=8, 
+                          command=print_document_as_pdf)
+    pdf_button.pack(side=tk.RIGHT, padx=5)
+    
+    # Regular Print button
     print_button = tk.Button(button_frame, text="Print", bg=ACCENT_COLOR, fg=BUTTON_TEXT_COLOR, 
                            font=("Arial", 10, "bold"), padx=20, pady=8, 
                            command=lambda: print_document(print_type_var.get()))
@@ -318,21 +411,37 @@ def get_formatted_prescription(patient_name):
     current_date = datetime.now().strftime("%B %d, %Y")
     formatted_text += f"Date: {current_date}\n\n"
     
+    # Get patient information
+    patient_address = entry_address.get()
+    patient_age = entry_age.get()
+    
+    # Format patient header
+    formatted_text += f"{patient_name.upper()}"
+    if patient_age:
+        formatted_text += f"    AGE: {patient_age}"
+    if patient_address:
+        formatted_text += f"    ADDRESS: {patient_address}"
+    formatted_text += "\n\n"
+    
     # Check if there are medications
     if tree_med.get_children():
         formatted_text += "Rx:\n\n"
         
-        # Add each medication to the formatted text
-        for item in tree_med.get_children():
+        # Add each medication to the formatted text with proper formatting
+        for idx, item in enumerate(tree_med.get_children()):
             values = tree_med.item(item)['values']
             brand = values[0]
             generic = values[1]
             quantity = values[2]
             admin = values[3]
             
-            formatted_text += f"{generic} ({brand})\n"
-            formatted_text += f"Quantity: {quantity}\n"
-            formatted_text += f"Administration: {admin}\n\n"
+            # Format medication as requested
+            formatted_text += f"{generic} {brand}\n"
+            formatted_text += f"#{quantity} {admin}\n"
+            
+            # Add separator between medications (except after the last one)
+            if idx < len(tree_med.get_children()) - 1:
+                formatted_text += "\n------------------------------------------\n\n"
     else:
         formatted_text += "No medications prescribed."
     
@@ -351,8 +460,8 @@ def print_document(print_type):
         fd, path = tempfile.mkstemp(suffix='.txt')
         try:
             with os.fdopen(fd, 'w') as temp:
-                # Add patient name at the top
-                temp.write(f"Patient: {entry_name.get()}\n\n")
+                # We don't need to add patient name at the top here as it's already
+                # included in the formatted prescription content
                 temp.write(content)
             
             # Open the file with the default application and print
