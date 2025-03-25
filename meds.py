@@ -98,7 +98,7 @@ def save_record():
             text_remarks.get("1.0", tk.END),  # Use remarks as findings
             "",          # lab_ids
             current_date,  # dateOfVisit
-            current_date,  # last_checkup_date
+            current_date  # last_checkup_date
         )
         
         checkup_id = db.add_checkup(checkup_data)
@@ -121,6 +121,7 @@ def save_record():
         
         # Refresh the patient list and keep the current patient selected
         refresh_patient_list(patient_name)
+        load_checkup_history(patient_id)
         
         # Show a visual confirmation that data is refreshed
         status_label = tk.Label(frame_patient, text="✓ Patient list refreshed", 
@@ -128,7 +129,7 @@ def save_record():
         status_label.grid(row=5, column=0, columnspan=4, padx=5, pady=5, sticky="ew")
         
         # Remove the status label after 3 seconds
-        root.after(3000, status_label.destroy)
+        root.after(2000, status_label.destroy)
         
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred: {str(e)}")
@@ -556,12 +557,49 @@ tk.Label(frame_patient, text="Blood Pressure:", bg=SECONDARY_COLOR, fg=TEXT_COLO
 entry_bp = ttk.Entry(frame_patient, width=15)
 entry_bp.grid(row=4, column=1, padx=5, pady=5, sticky="w")
 
+def load_checkup_details(event=None):
+    selected_date = checkup_history_var.get()
+    if not selected_date or selected_date == "No previous checkups":
+        return
+        
+    try:
+        for item in tree_med.get_children():
+            tree_med.delete(item)
+        
+        db = DatabaseHelper()
+        patient_id = patient_dict[entry_name.get()]
+        
+        # Clear current medications in tree
+        for item in tree_med.get_children():
+            tree_med.delete(item)
+                
+        # Load prescriptions for this checkup date
+        prescriptions = db.get_prescriptions_for_checkup(patient_id, selected_date)
+        
+        # Insert prescriptions into treeview
+        for rx in prescriptions:
+            tree_med.insert("", "end", values=(
+                rx[0],  # brand
+                rx[1],  # generic
+                rx[2],  # quantity
+                rx[3]   # administration
+            ))
+            
+        # Load remarks/findings
+        checkup = next((c for c in current_checkups if c[4] == selected_date), None)
+        if checkup:
+            text_remarks.delete("1.0", tk.END)
+            text_remarks.insert("1.0", checkup[1] or "")
+            
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load checkup details: {str(e)}")
+        
 # Add this after the Blood Pressure field in the patient information section
 tk.Label(frame_patient, text="Checkup History:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=5, column=0, padx=5, pady=5, sticky="w")
 checkup_history_var = tk.StringVar()
 checkup_history_dropdown = ttk.Combobox(frame_patient, textvariable=checkup_history_var, width=25, state="readonly")
 checkup_history_dropdown.grid(row=5, column=1, padx=5, pady=5, sticky="w")
-checkup_history_dropdown.bind("<<ComboboxSelected>>", lambda e: load_checkup_details())
+checkup_history_dropdown.bind("<<ComboboxSelected>>", load_checkup_details)
 
 # Right column of patient info
 tk.Label(frame_patient, text="Civil Status:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=0, column=2, padx=5, pady=5, sticky="w")
@@ -672,7 +710,35 @@ med_scrollbar.place(relx=0.97, rely=0.05, relheight=0.7)
 med_button_frame = tk.Frame(frame_med, bg=SECONDARY_COLOR)
 med_button_frame.pack(padx=1, pady=1, fill=tk.X)
 
+
+
+
+def clear_prescriptions(show_confirmation=True):
+    """Clear all medications from the prescription table"""
+    if tree_med.get_children():  # Check if there are any prescriptions
+        if not show_confirmation or messagebox.askyesno("Clear Prescriptions", "Are you sure you want to clear all prescriptions?"):
+            for item in tree_med.get_children():
+                tree_med.delete(item)
+                
+btn_clear_meds = tk.Button(med_button_frame, text="Clear All", 
+                          bg=WARNING_COLOR, fg=BUTTON_TEXT_COLOR, 
+                          padx=10, pady=5, command=clear_prescriptions)
+btn_clear_meds.pack(side=tk.LEFT, padx=5)                
+
 def open_medication_management():
+    # Get current medications from tree_med
+    current_medications = []
+    for item in tree_med.get_children():
+        values = tree_med.item(item)['values']
+        current_medications.append({
+            "id": None,  # Since we don't have ID in the prescription table
+            "brand": values[0],  # Brand name
+            "generic": values[1],  # Generic name
+            "quantity": values[2],  # Quantity
+            "administration": values[3],  # Administration
+            "tree_id": item
+        })
+
     # Define callback function to receive medications from the management window
     def update_medications(medications):
         # Clear current medications in the tree
@@ -681,15 +747,25 @@ def open_medication_management():
         
         # Add new medications
         for med in medications:
-            tree_med.insert("", tk.END, values=(
+            tree_med.insert("", "end", values=(
                 med["brand"],
                 med["generic"],
                 med["quantity"],
                 med["administration"]
             ))
     
-    # Open medication management window
+    # Open medication management window with current medications
     med_window = MedicationManagementWindow(root, callback=update_medications)
+    
+    # After window is created, populate it with current medications
+    for med in current_medications:
+        med_window.tree.insert("", "end", values=(
+            med["id"],
+            med["brand"],
+            med["generic"],
+            med["quantity"],
+            med["administration"]
+        ))
 
 def remove_selected_medication():
     selected_item = tree_med.selection()
@@ -743,9 +819,10 @@ patient_dict = load_patient_names()
 
 def on_name_select(event=None):
     selected_name = entry_name.get()
-    if (selected_name in patient_dict):
+    if selected_name in patient_dict:
         db = DatabaseHelper()
         patient = db.get_patient_details(patient_dict[selected_name])
+        load_checkup_history(patient)
         if patient:
             # Clear existing fields
             entry_address.delete(0, tk.END)
@@ -916,42 +993,22 @@ def load_checkup_history(patient_id):
         db = DatabaseHelper()
         checkups = db.get_patient_checkups(patient_id)
         
-        # Create a list of formatted dates for the dropdown
-        if checkups:
-            history_items = [f"{checkup[3]} - BP: {checkup[5] or 'Not recorded'}" for checkup in checkups]
-            checkup_history_dropdown['values'] = history_items
-            
-            # Store the checkup data for later use
+        # Format dates for dropdown
+        checkup_dates = [checkup[4] for checkup in checkups]  # Using last_checkup_date
+        
+        # Update dropdown values
+        if checkup_dates:
+            checkup_history_dropdown['values'] = checkup_dates
+            checkup_history_dropdown.set(checkup_dates[0])  # Set to most recent
             global current_checkups
             current_checkups = checkups
-            
-            # Select the most recent checkup
-            checkup_history_var.set(history_items[0] if history_items else "")
         else:
             checkup_history_dropdown['values'] = ["No previous checkups"]
-            checkup_history_var.set("No previous checkups")
-            current_checkups = []
+            checkup_history_dropdown.set("No previous checkups")
+            
     except Exception as e:
-        print(f"Error loading checkup history: {e}")
-        checkup_history_dropdown['values'] = ["Error loading checkups"]
-        checkup_history_var.set("Error loading checkups")
+        messagebox.showerror("Error", f"Failed to load checkup history: {str(e)}")
 
-def load_checkup_details():
-    """Load the details of the selected checkup and display in a notification window"""
-    selected_checkup = checkup_history_var.get()
-    if not selected_checkup or selected_checkup in ["No previous checkups", "Error loading checkups"]:
-        return
-    
-    # Find the checkup record that matches the selected date
-    try:
-        selected_index = checkup_history_dropdown['values'].index(selected_checkup)
-        checkup = current_checkups[selected_index]
-        
-        # Display checkup details in a notification window
-        show_checkup_notification(checkup)
-        
-    except Exception as e:
-        print(f"Error loading checkup details: {e}")
 
 def show_checkup_notification(checkup):
     """Display checkup details in a notification window"""

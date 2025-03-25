@@ -245,14 +245,28 @@ class MedicationManagementWindow:
         self.medications = [med for med in self.medications if med["tree_id"] != tree_id]
     
     def save_all(self):
-        if not self.medications:
+        """Save all medications and send them back to main window"""
+        # Get all medications from the tree view
+        all_medications = []
+        for item in self.tree.get_children():
+            values = self.tree.item(item)['values']
+            all_medications.append({
+                "id": values[0],
+                "brand": values[1],
+                "generic": values[2],
+                "quantity": values[3],
+                "administration": values[4],
+                "tree_id": item
+            })
+        
+        if not all_medications:
             messagebox.showwarning("Save Error", "No medications to save!")
             return
         
-        # If we have a callback function, call it with our medications
+        # If we have a callback function, call it with all medications
         if self.callback:
-            self.callback(self.medications)
-            messagebox.showinfo("Success", f"{len(self.medications)} medications saved successfully!")
+            self.callback(all_medications)
+            messagebox.showinfo("Success", f"{len(all_medications)} medications saved successfully!")
             self.back_to_main()
     
     def back_to_main(self):

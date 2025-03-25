@@ -245,18 +245,19 @@ class DatabaseHelper:
         finally:
             conn.close()
 
-    def get_prescriptions_for_checkup(self, checkup_id):
-        """Get prescriptions associated with a specific checkup"""
+    def get_prescriptions_for_checkup(self, patient_id, checkup_date):
+        """Get prescriptions for a specific checkup date"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
+            # Modified query to get only prescriptions for specific date
             cursor.execute("""
                 SELECT brand, generic, quantity, administration 
                 FROM Prescriptions 
-                WHERE checkup_id = ?
-            """, (checkup_id,))
-            prescriptions = cursor.fetchall()
-            return prescriptions
+                WHERE patient_id = ? 
+                AND DATE(last_checkup_date) = DATE(?)
+            """, (patient_id, checkup_date))
+            return cursor.fetchall()
         except sqlite3.Error as e:
             print(f"Database error: {e}")
             return []
