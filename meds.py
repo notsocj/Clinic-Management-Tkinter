@@ -12,6 +12,8 @@ import os
 import tempfile
 import subprocess
 from PIL import Image, ImageDraw, ImageFont
+from tkinter import filedialog
+from lab_charts import LabChartsWindow
 
 # Main Application Window
 root = tk.Tk()
@@ -219,8 +221,6 @@ def open_med_cert():
     # Create and open the medical certificate window
     med_cert_window = MedicalCertificateWindow(root, patient_data)
 
-def open_lab_charts():
-    messagebox.showinfo("Lab/Charts", "Lab and Charts module will open here!")
 
 def open_print_dialog():
     """Open a print dialog window to print prescription or findings"""
@@ -483,7 +483,34 @@ def print_document(print_type):
             
     except Exception as e:
         messagebox.showerror("Print Error", f"Failed to print: {str(e)}")
-
+        
+def open_lab_charts(new_files=None):
+    """Open the Lab/Charts window with any newly selected files"""
+    if not entry_name.get():
+        messagebox.showwarning("Warning", "Please select a patient first.")
+        return
+    
+    patient_name = entry_name.get()
+    patient_id = patient_dict.get(patient_name)  # Get patient_id from patient_dict
+    if not patient_id:
+        messagebox.showerror("Error", "Patient not found in database.")
+        return
+    
+    lab_window = LabChartsWindow(root, patient_name, patient_id, new_files)
+    
+def open_scan_dialog():
+    file_types = [
+        ('Image files', '*.png *.jpg *.jpeg *.gif *.bmp'),
+        ('All files', '*.*')
+    ]
+    files = filedialog.askopenfilenames(
+        title="Select Images",
+        filetypes=file_types
+    )
+    
+    if files:
+        open_lab_charts(files)
+        
 # Sidebar buttons
 btn_save = create_sidebar_button("Save Record", save_record, ACCENT_COLOR)
 btn_update = create_sidebar_button("Update Record", update_record, PRIMARY_COLOR)
@@ -492,6 +519,7 @@ btn_delete = create_sidebar_button("Delete Record", delete_record, WARNING_COLOR
 ttk.Separator(sidebar).pack(fill=tk.X, padx=10, pady=5)
 btn_print = create_sidebar_button("Print", open_print_dialog, PRIMARY_COLOR)  # Add print button
 btn_med_cert = create_sidebar_button("Medical Certificate", open_med_cert, PRIMARY_COLOR)
+btn_scan = create_sidebar_button("Scan/Import", open_scan_dialog, PRIMARY_COLOR)
 btn_lab = create_sidebar_button("Lab/Charts", open_lab_charts, PRIMARY_COLOR)
 
 # Exit button at the bottom of sidebar
@@ -519,6 +547,8 @@ selected_date = tk.StringVar()
 birthdate_entry = ttk.Entry(birthdate_frame, width=15, textvariable=selected_date)
 birthdate_entry.pack(side=tk.LEFT, padx=(0,5))
 
+
+    
 def show_calendar():
     cal_window = tk.Toplevel(root)
     cal_window.title("Select Birthdate")
