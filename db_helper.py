@@ -263,3 +263,63 @@ class DatabaseHelper:
             return []
         finally:
             conn.close()
+
+    def get_checkup_by_date(self, patient_id, checkup_date):
+        """Get a checkup record for a specific patient and date"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT id, findings, lab_ids, dateOfVisit, last_checkup_date, blood_pressure
+                FROM Checkups 
+                WHERE patient_id = ? AND DATE(last_checkup_date) = DATE(?)
+            """, (patient_id, checkup_date))
+            checkup = cursor.fetchone()
+            return checkup
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def update_checkup(self, checkup_data):
+        """Update an existing checkup record"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE Checkups 
+                SET findings = ?, lab_ids = ?, blood_pressure = ?
+                WHERE id = ?
+            """, (
+                checkup_data[0],  # findings
+                checkup_data[1],  # lab_ids
+                checkup_data[2],  # blood_pressure
+                checkup_data[3],  # checkup_id
+            ))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_prescriptions_for_checkup(self, patient_id, checkup_date):
+        """Delete all prescriptions for a specific checkup date"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                DELETE FROM Prescriptions 
+                WHERE patient_id = ? AND DATE(last_checkup_date) = DATE(?)
+            """, (patient_id, checkup_date))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()

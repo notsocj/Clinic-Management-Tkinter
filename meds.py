@@ -137,7 +137,127 @@ def save_record():
         messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
 def update_record():
-    messagebox.showinfo("Update", "Record updated successfully!")
+    try:
+        db = DatabaseHelper()
+        patient_name = entry_name.get()
+        
+        # Check if the patient exists
+        if not patient_name or patient_name not in patient_dict:
+            messagebox.showwarning("Error", "Please select a valid patient first.")
+            return
+        
+        patient_id = patient_dict[patient_name]
+        
+        # Get the selected date from the dropdown or use current date
+        selected_checkup_date = checkup_history_var.get()
+        if selected_checkup_date == "No previous checkups":
+            # No checkup selected, use today's date
+            checkup_date = datetime.now().strftime('%Y-%m-%d')
+            is_new_checkup = True
+        else:
+            # Use the selected date
+            checkup_date = selected_checkup_date
+            is_new_checkup = False
+        
+        # For existing checkups, get the checkup ID
+        if not is_new_checkup:
+            existing_checkup = next((c for c in current_checkups if c[4] == checkup_date), None)
+            if existing_checkup:
+                checkup_id = existing_checkup[0]
+                
+                # Update the existing checkup record
+                checkup_data = (
+                    text_remarks.get("1.0", tk.END),  # findings
+                    existing_checkup[2],  # Keep existing lab_ids
+                    entry_bp.get(),      # blood_pressure
+                    checkup_id           # checkup_id
+                )
+                db.update_checkup(checkup_data)
+                
+                # Delete existing prescriptions for this date
+                db.delete_prescriptions_for_checkup(patient_id, checkup_date)
+                
+                # Add new prescriptions
+                for item in tree_med.get_children():
+                    values = tree_med.item(item)['values']
+                    prescription_data = (
+                        patient_id,
+                        values[1],  # generic
+                        values[0],  # brand
+                        values[2],  # quantity
+                        values[3],  # administration
+                        checkup_date  # last_checkup_date
+                    )
+                    db.add_prescription(prescription_data)
+            else:
+                messagebox.showerror("Error", "Selected checkup record not found.")
+                return
+        else:
+            # Create a new checkup for today
+            existing_today_checkup = db.get_checkup_by_date(patient_id, checkup_date)
+            
+            if existing_today_checkup:
+                # If there's already a checkup for today, confirm before overwriting
+                response = messagebox.askyesno(
+                    "Checkup Exists", 
+                    f"A checkup record already exists for today. Do you want to update it?",
+                    icon='warning'
+                )
+                if not response:
+                    return
+                
+                # Update existing checkup for today
+                checkup_data = (
+                    text_remarks.get("1.0", tk.END),  # findings
+                    existing_today_checkup[2],  # Keep existing lab_ids
+                    entry_bp.get(),  # blood_pressure
+                    existing_today_checkup[0]  # checkup_id
+                )
+                db.update_checkup(checkup_data)
+                
+                # Delete and recreate prescriptions
+                db.delete_prescriptions_for_checkup(patient_id, checkup_date)
+            else:
+                # Create a new checkup record
+                checkup_data = (
+                    patient_id,
+                    text_remarks.get("1.0", tk.END),  # Use remarks as findings
+                    "",          # lab_ids
+                    checkup_date,  # dateOfVisit
+                    checkup_date  # last_checkup_date
+                )
+                db.add_checkup(checkup_data)
+            
+            # Add prescriptions with updated format
+            for item in tree_med.get_children():
+                values = tree_med.item(item)['values']
+                prescription_data = (
+                    patient_id,
+                    values[1],  # generic
+                    values[0],  # brand
+                    values[2],  # quantity
+                    values[3],  # administration
+                    checkup_date  # last_checkup_date
+                )
+                db.add_prescription(prescription_data)
+        
+        # Display a success message
+        messagebox.showinfo("Success", "Record updated successfully!")
+        
+        # Refresh the patient data
+        refresh_patient_list(patient_name)
+        load_checkup_history(patient_id)
+        
+        # Show a visual confirmation that data is refreshed
+        status_label = tk.Label(frame_patient, text="✓ Patient data updated", 
+                              bg=ACCENT_COLOR, fg="white", font=("Arial", 10))
+        status_label.grid(row=5, column=0, columnspan=4, padx=5, pady=5, sticky="ew")
+        
+        # Remove the status label after 3 seconds
+        root.after(2000, status_label.destroy)
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred during update: {str(e)}")
 
 def clear_form(show_message=True):
     # Clear all entry fields and text widgets
