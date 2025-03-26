@@ -702,10 +702,14 @@ tk.Label(frame_patient, text="Phone:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(r
 entry_phone = ttk.Entry(frame_patient, width=20)
 entry_phone.grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
-# Blood Pressure moved below Phone
-tk.Label(frame_patient, text="Blood Pressure:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=4, column=0, padx=5, pady=5, sticky="w")
-entry_bp = ttk.Entry(frame_patient, width=15)
-entry_bp.grid(row=4, column=1, padx=5, pady=5, sticky="w")
+
+frame_bp = tk.Frame(content_frame, bg=SECONDARY_COLOR)
+frame_bp.place(x=10, y=335, width=485, height=40)
+
+tk.Label(frame_bp, text="Blood Pressure:", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+entry_bp = ttk.Entry(frame_bp, width=15)
+entry_bp.pack(side=tk.LEFT, padx=5)
+
 
 def load_checkup_details(event=None):
     selected_date = checkup_history_var.get()
@@ -745,10 +749,10 @@ def load_checkup_details(event=None):
         messagebox.showerror("Error", f"Failed to load checkup details: {str(e)}")
         
 # Add this after the Blood Pressure field in the patient information section
-tk.Label(frame_patient, text="Checkup History:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=5, column=0, padx=5, pady=5, sticky="w")
+tk.Label(frame_patient, text="Checkup History:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=4, column=0, padx=5, pady=5, sticky="w")
 checkup_history_var = tk.StringVar()
 checkup_history_dropdown = ttk.Combobox(frame_patient, textvariable=checkup_history_var, width=25, state="readonly")
-checkup_history_dropdown.grid(row=5, column=1, padx=5, pady=5, sticky="w")
+checkup_history_dropdown.grid(row=4, column=1, padx=5, pady=5, sticky="w")
 checkup_history_dropdown.bind("<<ComboboxSelected>>", load_checkup_details)
 
 # Right column of patient info
@@ -825,7 +829,7 @@ btn_remove_queue.pack(side=tk.LEFT, padx=5)
 
 # ----------------- Remarks Section ----------------- #
 frame_remarks = tk.LabelFrame(content_frame, text="REMARKS & NOTES", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 12, "bold"))
-frame_remarks.place(x=10, y=340, width=485, height=280)
+frame_remarks.place(x=10, y=380, width=485, height=240) 
 
 text_remarks = tk.Text(frame_remarks, width=55, height=14)
 text_remarks.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
