@@ -11,10 +11,28 @@ class DatabaseHelper:
     def get_medicines(self):
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM medicine")
-        medicines = cursor.fetchall()
-        conn.close()
-        return medicines
+        try:
+            # Check if the quantity and administration columns exist
+            cursor.execute("PRAGMA table_info(medicine)")
+            columns = cursor.fetchall()
+            column_names = [col[1] for col in columns]
+            
+            # If columns don't exist, alter the table to add them
+            if 'quantity' not in column_names:
+                cursor.execute("ALTER TABLE medicine ADD COLUMN quantity TEXT DEFAULT ''")
+            if 'administration' not in column_names:
+                cursor.execute("ALTER TABLE medicine ADD COLUMN administration TEXT DEFAULT ''")
+            
+            # Get all medicine data including new fields
+            cursor.execute("SELECT id, brand, generic, quantity, administration FROM medicine")
+            medicines = cursor.fetchall()
+            conn.commit()
+            return medicines
+        except sqlite3.Error as e:
+            print(f"Database error in get_medicines: {e}")
+            return []
+        finally:
+            conn.close()
 
     def get_labs(self):
         conn = self.get_connection()
@@ -137,14 +155,23 @@ class DatabaseHelper:
         return patient
 
     def add_medicine(self, medicine_data):
-        """Add a new medicine to the database"""
+        """Add a new medicine to the database with quantity and administration"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
-                INSERT INTO medicine (brand, generic)
-                VALUES (?, ?)
-            """, medicine_data[:2])  # Only use the first two elements (brand, generic)
+            # Check if the medicine_data has 4 elements (brand, generic, quantity, administration)
+            if len(medicine_data) >= 4:
+                cursor.execute("""
+                    INSERT INTO medicine (brand, generic, quantity, administration)
+                    VALUES (?, ?, ?, ?)
+                """, medicine_data[:4])  # Use the first four elements
+            else:
+                # Backward compatibility if only brand and generic are provided
+                cursor.execute("""
+                    INSERT INTO medicine (brand, generic)
+                    VALUES (?, ?)
+                """, medicine_data[:2])
+            
             conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
@@ -155,15 +182,25 @@ class DatabaseHelper:
             conn.close()
     
     def update_medicine(self, medicine_data):
-        """Update an existing medicine in the database"""
+        """Update an existing medicine in the database including quantity and administration"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
-                UPDATE medicine
-                SET generic = ?
-                WHERE id = ?
-            """, medicine_data)
+            # Check if medicine_data has all fields (generic, quantity, administration, id)
+            if len(medicine_data) >= 4:
+                cursor.execute("""
+                    UPDATE medicine
+                    SET generic = ?, quantity = ?, administration = ?
+                    WHERE id = ?
+                """, medicine_data)
+            else:
+                # Backward compatibility if only generic and id are provided
+                cursor.execute("""
+                    UPDATE medicine
+                    SET generic = ?
+                    WHERE id = ?
+                """, medicine_data)
+            
             conn.commit()
             return cursor.rowcount
         except sqlite3.Error as e:
@@ -171,7 +208,7 @@ class DatabaseHelper:
             raise
         finally:
             conn.close()
-    
+
     def delete_medicine(self, medicine_id):
         """Delete a medicine from the database"""
         conn = self.get_connection()
@@ -317,6 +354,120 @@ class DatabaseHelper:
             """, (patient_id, checkup_date))
             conn.commit()
             return True
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def save_patient_lab_image(self, patient_id, file_path, checkup_id=None):
+        """Save a lab image path associated with a patient"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if the LabImages table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='LabImages'")
+            if not cursor.fetchone():
+                # Create the table if it doesn't exist
+                cursor.execute("""
+                    CREATE TABLE LabImages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        patient_id INTEGER,
+                        checkup_id INTEGER,
+                        file_path TEXT,
+                        upload_date TEXT,
+                        FOREIGN KEY (patient_id) REFERENCES Patients(id),
+                        FOREIGN KEY (checkup_id) REFERENCES Checkups(id)
+                    )
+                """)
+                
+            # Get current date
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            
+            # Insert the image record
+            cursor.execute("""
+                INSERT INTO LabImages (patient_id, checkup_id, file_path, upload_date)
+                VALUES (?, ?, ?, ?)
+            """, (patient_id, checkup_id, file_path, current_date))
+            
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            return None
+        finally:
+            conn.close()
+
+    def get_patient_lab_images(self, patient_id):
+        """Get all lab images associated with a patient"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if the LabImages table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='LabImages'")
+            if not cursor.fetchone():
+                return []
+                
+            # Get all images for the patient
+            cursor.execute("""
+                SELECT file_path FROM LabImages
+                WHERE patient_id = ?
+                ORDER BY upload_date DESC
+            """, (patient_id,))
+            
+            image_paths = [row[0] for row in cursor.fetchall()]
+            return image_paths
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_checkup_lab_images(self, checkup_id):
+        """Get lab images associated with a specific checkup"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if the LabImages table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='LabImages'")
+            if not cursor.fetchone():
+                return []
+                
+            # Get images for the checkup
+            cursor.execute("""
+                SELECT file_path FROM LabImages
+                WHERE checkup_id = ?
+                ORDER BY upload_date DESC
+            """, (checkup_id,))
+            
+            image_paths = [row[0] for row in cursor.fetchall()]
+            return image_paths
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def delete_patient_lab_image(self, patient_id, file_path):
+        """Delete a lab image record from the database"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if the LabImages table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='LabImages'")
+            if not cursor.fetchone():
+                return False
+                
+            # Delete the image record
+            cursor.execute("""
+                DELETE FROM LabImages 
+                WHERE patient_id = ? AND file_path = ?
+            """, (patient_id, file_path))
+            
+            conn.commit()
+            return cursor.rowcount > 0  # Return True if a record was deleted
         except sqlite3.Error as e:
             print(f"Database error: {e}")
             conn.rollback()

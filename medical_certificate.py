@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, font, messagebox
+from tkinter import ttk, font, messagebox, filedialog
 from datetime import datetime
 import tkinter.scrolledtext as scrolledtext
 import os
@@ -37,7 +37,12 @@ class MedicalCertificateWindow:
         main_frame = tk.Frame(self.window, bg="#f0f0f0")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
-        # Rich text box with scrollbar
+        # Instructions label
+        instructions = tk.Label(main_frame, text="You can edit the certificate text below before printing or saving",
+                              bg="#f0f0f0", fg="#3498db", font=("Arial", 10, "italic"))
+        instructions.pack(fill=tk.X, pady=(0, 5))
+        
+        # Rich text box with scrollbar - now editable by default
         self.rich_text = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, width=80, height=30)
         self.rich_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
@@ -45,8 +50,12 @@ class MedicalCertificateWindow:
         button_frame = tk.Frame(self.window, bg="#f0f0f0")
         button_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
         
-        # Print button
-        self.print_button = ttk.Button(button_frame, text="Print Certificate", command=self.print_certificate)
+        # Save to File button (new)
+        self.save_button = ttk.Button(button_frame, text="Save to File", command=self.save_to_file)
+        self.save_button.pack(side=tk.LEFT, padx=5)
+        
+        # Print button (renamed from Print Certificate to Export as PDF)
+        self.print_button = ttk.Button(button_frame, text="Export as PDF", command=self.export_as_pdf)
         self.print_button.pack(side=tk.LEFT, padx=5)
         
         # PDF Print button - new button for generating and printing PDF
@@ -57,139 +66,236 @@ class MedicalCertificateWindow:
         self.exit_button = ttk.Button(button_frame, text="Close", command=self.window.destroy)
         self.exit_button.pack(side=tk.RIGHT, padx=5)
     
-    def print_certificate(self):
-        # Get content from the rich text widget
-        content = self.rich_text.get("1.0", tk.END)
-        
-        # Create a temporary file
-        fd, path = tempfile.mkstemp(suffix='.txt')
+    def save_to_file(self):
+        """Save the certificate text to a file"""
         try:
-            with os.fdopen(fd, 'w') as temp:
-                temp.write(content)
+            # Get content from the rich text widget
+            content = self.rich_text.get("1.0", tk.END)
             
-            # Open the file with the default application and print
-            if os.name == 'nt':  # Windows
-                os.startfile(path, "print")
-            else:  # macOS and Linux
-                subprocess.call(['lpr', path])
-                
-            messagebox.showinfo("Print", "Certificate sent to printer.")
+            # Get the patient name for the default filename
+            patient_name = self.patient_data.get('name', 'Unknown').replace(' ', '_')
+            default_filename = f"Medical_Certificate_{patient_name}_{datetime.now().strftime('%Y%m%d')}.txt"
+            
+            # Open file dialog to select save location
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                initialfile=default_filename
+            )
+            
+            if file_path:
+                with open(file_path, 'w') as file:
+                    file.write(content)
+                messagebox.showinfo("Success", f"Certificate saved to:\n{file_path}")
+        
         except Exception as e:
-            messagebox.showerror("Print Error", f"Failed to print: {str(e)}")
-        finally:
-            # Clean up the temp file after a delay
-            self.window.after(10000, lambda: os.unlink(path))
+            messagebox.showerror("Error", f"Failed to save file: {str(e)}")
+    
+    def export_as_pdf(self):
+        """Export the certificate as a PDF file"""
+        try:
+            # Get the patient name for the default filename
+            patient_name = self.patient_data.get('name', 'Unknown').replace(' ', '_')
+            default_filename = f"Medical_Certificate_{patient_name}_{datetime.now().strftime('%Y%m%d')}.pdf"
+            
+            # Open file dialog to select save location
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".pdf",
+                filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+                initialfile=default_filename
+            )
+            
+            if file_path:
+                # Create a PDF document with A4 size
+                self.generate_pdf(file_path)
+                
+                # Show success message with option to open the file
+                response = messagebox.askyesno(
+                    "Success", 
+                    f"Certificate saved as PDF to:\n{file_path}\n\nWould you like to open it now?",
+                    icon='info'
+                )
+                
+                if response:
+                    if os.name == 'nt':  # Windows
+                        os.startfile(file_path)
+                    else:  # macOS and Linux
+                        subprocess.call(['xdg-open', file_path])
+        
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to create PDF: {str(e)}")
+    
+    def print_certificate(self):
+        """Deprecated: This function is kept for backward compatibility"""
+        self.export_as_pdf()
     
     def print_as_pdf(self):
-        """Generate a PDF and send it to the printer"""
+        """Generate a PDF and open it for printing"""
         try:
             # Create a temporary PDF file
             fd, pdf_path = tempfile.mkstemp(suffix='.pdf')
             os.close(fd)
             
-            # Get the certificate content
-            content = self.rich_text.get("1.0", tk.END)
+            # Generate the PDF
+            self.generate_pdf(pdf_path)
             
-            # Create a PDF document with A4 size
-            doc = SimpleDocTemplate(pdf_path, pagesize=A4,
-                                   rightMargin=72, leftMargin=72,
-                                   topMargin=72, bottomMargin=72)
+            # Show a success message
+            messagebox.showinfo("PDF Created", 
+                "The medical certificate has been created as a PDF.\n"
+                "It will open in your default PDF viewer where you can print it.")
             
-            # Styles for different text parts
-            styles = getSampleStyleSheet()
-            title_style = styles['Title']
-            normal_style = styles['Normal']
-            
-            # Custom styles
-            header_style = ParagraphStyle(
-                'HeaderStyle',
-                parent=styles['Heading1'],
-                fontSize=16,
-                textColor=colors.blue,
-                spaceAfter=12
-            )
-            
-            certification_style = ParagraphStyle(
-                'CertificationStyle',
-                parent=styles['Heading2'],
-                fontSize=14,
-                alignment=1,  # Center alignment
-                spaceAfter=12
-            )
-            
-            # Elements to add to the PDF
-            elements = []
-            
-            # Add doctor's header
-            elements.append(Paragraph("DR. BELINDA O. CABAUATAN", header_style))
-            elements.append(Paragraph("ADULT NEUROLOGY", styles['Heading3']))
-            elements.append(Paragraph("BRAIN, SPINAL CORD, NERVE AND MUSCLE SPECIALIST", styles['Heading4']))
-            elements.append(Spacer(1, 12))
-            
-            # Add medical certificate title
-            elements.append(Paragraph("MEDICAL CERTIFICATE", certification_style))
-            elements.append(Spacer(1, 12))
-            
-            # Get today's date
-            today_date = datetime.now().strftime("%A, %d %B %Y")
-            
-            # Add patient information
-            patient_text = f"This is to certify that {self.patient_data['name']} {self.patient_data['age']} years old, from {self.patient_data['address']} was seen and examined in this clinic on {today_date}."
-            elements.append(Paragraph(patient_text, normal_style))
-            elements.append(Spacer(1, 12))
-            
-            # Add diagnosis
-            elements.append(Paragraph("DIAGNOSIS:", styles['Heading3']))
-            elements.append(Paragraph(self.patient_data.get('findings', 'No findings recorded'), normal_style))
-            elements.append(Spacer(1, 24))
-            
-            # Add remarks section with the text from remarks data
-            elements.append(Paragraph("REMARKS:", styles['Heading3']))
-            if self.patient_data.get('remarks'):
-                elements.append(Paragraph(self.patient_data.get('remarks'), normal_style))
-            else:
-                elements.append(Spacer(1, 48))  # Space for writing remarks
-            
-            # Add certification notice
-            elements.append(Spacer(1, 24))
-            elements.append(Paragraph("This certification is issued for reference use only.", normal_style))
-            elements.append(Paragraph(f"Issued this {today_date} at Iriga Clinic.", normal_style))
-            
-            # Add space for signature
-            elements.append(Spacer(1, 48))
-            
-            # Add doctor's information with right alignment
-            doctor_style = ParagraphStyle(
-                'DoctorStyle',
-                parent=styles['Normal'],
-                alignment=2  # Right alignment
-            )
-            elements.append(Paragraph("DR. BELINDA O. CABAUATAN M.D.", doctor_style))
-            elements.append(Paragraph("NEUROLOGY", doctor_style))
-            elements.append(Paragraph("Lic. No.    109769", doctor_style))
-            elements.append(Paragraph("PTR. No.    4813787", doctor_style))
-            
-            # Build the PDF
-            doc.build(elements)
-            
-            # Open with Chrome
-            try:
-                chrome_path = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-                if os.path.exists(chrome_path):
-                    subprocess.Popen([chrome_path, '--new-window', pdf_path])
-                else:
-                    # Fallback to default method
-                    os.startfile(pdf_path)
-                    
-            except Exception as e:
-                messagebox.showerror("Error", 
-                    "Could not open PDF. Please check if Chrome is installed.")
+            # Open with system default PDF viewer
+            if os.name == 'nt':  # Windows
+                os.startfile(pdf_path)
+            else:  # macOS and Linux
+                subprocess.call(['xdg-open', pdf_path])
                 
             # Clean up temp file after delay
-            self.window.after(10000, lambda: os.unlink(pdf_path))
+            self.window.after(30000, lambda: self.cleanup_temp_file(pdf_path))
                 
         except Exception as e:
             messagebox.showerror("PDF Error", f"Failed to create PDF: {str(e)}")
+    
+    def cleanup_temp_file(self, file_path):
+        """Clean up temporary files after a delay"""
+        try:
+            if os.path.exists(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(f"Error cleaning up temporary file: {e}")
+    
+    def generate_pdf(self, pdf_path):
+        """Generate a PDF file with the certificate content that matches the visual layout"""
+        # Create a PDF document with A4 size
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                              rightMargin=72, leftMargin=72,
+                              topMargin=72, bottomMargin=72)
+        
+        # Styles for different text parts
+        styles = getSampleStyleSheet()
+        
+        # Custom styles that match the rich text display
+        header_style = ParagraphStyle(
+            'HeaderStyle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            fontName='Helvetica-Bold',
+            textColor=colors.blue,
+            spaceAfter=6
+        )
+        
+        subheader_style = ParagraphStyle(
+            'SubheaderStyle',
+            parent=styles['Heading2'],
+            fontSize=11,
+            fontName='Helvetica-Bold',
+            spaceAfter=3
+        )
+        
+        title_style = ParagraphStyle(
+            'TitleStyle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            fontName='Helvetica-Bold',
+            alignment=0,  # Left alignment to match rich text
+            spaceAfter=12,
+            spaceBefore=6
+        )
+        
+        normal_style = ParagraphStyle(
+            'NormalStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            spaceAfter=4
+        )
+        
+        diagnosis_style = ParagraphStyle(
+            'DiagnosisStyle',
+            parent=styles['Heading3'],
+            fontSize=12,
+            fontName='Helvetica',
+            spaceAfter=6,
+            spaceBefore=6
+        )
+        
+        remarks_style = ParagraphStyle(
+            'RemarksStyle',
+            parent=diagnosis_style,
+            spaceBefore=24  # Add more space before remarks
+        )
+        
+        signature_style = ParagraphStyle(
+            'SignatureStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            alignment=2  # Right alignment
+        )
+        
+        # Get today's date for the certificate
+        today_date = datetime.now().strftime("%A, %d %B %Y")
+        
+        # Elements to add to the PDF
+        elements = []
+        
+        # Header section
+        elements.append(Paragraph("DR. BELINDA O. CABAUATAN", header_style))
+        elements.append(Paragraph("ADULT NEUROLOGY", subheader_style))
+        elements.append(Paragraph("BRAIN, SPINAL CORD, NERVE AND MUSCLE SPECIALIST", subheader_style))
+        elements.append(Spacer(1, 12))
+        
+        # Title - keep the same indentation as in the rich text
+        elements.append(Paragraph("               MEDICAL CERTIFICATE", title_style))
+        elements.append(Spacer(1, 12))
+        
+        # Patient information
+        patient_info = (f"This is to certify that {self.patient_data['name']} {self.patient_data['age']} years old, "
+                       f"from {self.patient_data['address']} was.")
+        elements.append(Paragraph(patient_info, normal_style))
+        elements.append(Paragraph(f"seen and examined in this clinic on {today_date}.", normal_style))
+        elements.append(Spacer(1, 12))
+        
+        # Diagnosis
+        elements.append(Paragraph("DIAGNOSIS:", diagnosis_style))
+        diagnosis_content = self.patient_data.get('findings', '')
+        if diagnosis_content:
+            elements.append(Paragraph(diagnosis_content, normal_style))
+        else:
+            # Add empty space for diagnosis if not provided
+            elements.append(Spacer(1, 40))
+        
+        # Add blank space between diagnosis and remarks
+        elements.append(Spacer(1, 24))
+        
+        # Remarks section
+        elements.append(Paragraph("REMARKS:", remarks_style))
+        remarks_content = self.patient_data.get('remarks', '')
+        if remarks_content:
+            # Split by lines to preserve formatting
+            for line in remarks_content.split('\n'):
+                if line.strip():
+                    elements.append(Paragraph(line, normal_style))
+        else:
+            # Add empty space for remarks if not provided
+            elements.append(Spacer(1, 60))
+        
+        # Certification notice with proper spacing
+        elements.append(Spacer(1, 24))
+        elements.append(Paragraph("This certification is issued for reference use only.", normal_style))
+        elements.append(Paragraph(f"Issued this {today_date} at Iriga Clinic.", normal_style))
+        
+        # Add space before signature
+        elements.append(Spacer(1, 72))
+        
+        # Doctor's signature section with right alignment
+        elements.append(Paragraph("DR. BELINDA O. CABAUATAN M.D.", signature_style))
+        elements.append(Paragraph("NEUROLOGY", signature_style))
+        elements.append(Paragraph("Lic. No.    109769", signature_style))
+        elements.append(Paragraph("PTR. No.    4813787", signature_style))
+        
+        # Build the PDF
+        doc.build(elements)
+        
+        return pdf_path
     
     def append_text(self, text, style="normal", alignment="left", size=10, color=None, font_name="Arial"):
         # Create a unique tag name for this text style

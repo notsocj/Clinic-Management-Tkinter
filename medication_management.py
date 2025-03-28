@@ -148,23 +148,39 @@ class MedicationManagementWindow:
         self.brand_dropdown['values'] = brands
         self.generic_dropdown['values'] = generics
         
-        # Store medicines for later use
-        self.medicine_dict = {med[1]: (med[0], med[2]) for med in medicines}  # brand: (id, generic)
-        self.generic_dict = {med[2]: (med[0], med[1]) for med in medicines}   # generic: (id, brand)
+        # Store medicines for later use - Include quantity and administration
+        self.medicine_dict = {med[1]: (med[0], med[2], med[3], med[4]) for med in medicines}  # brand: (id, generic, quantity, admin)
+        self.generic_dict = {med[2]: (med[0], med[1], med[3], med[4]) for med in medicines}   # generic: (id, brand, quantity, admin)
     
     def on_brand_select(self, event=None):
         selected_brand = self.brand_var.get()
         if selected_brand and selected_brand in self.medicine_dict:
-            # Set the corresponding generic name
-            med_id, generic = self.medicine_dict[selected_brand]
+            # Set the corresponding generic name, quantity and administration
+            med_id, generic, quantity, admin = self.medicine_dict[selected_brand]
             self.generic_var.set(generic)
+            
+            # Only set quantity and administration if they have values
+            if quantity:
+                self.quantity_entry.delete(0, tk.END)
+                self.quantity_entry.insert(0, quantity)
+            
+            if admin:
+                self.admin_var.set(admin)
     
     def on_generic_select(self, event=None):
         selected_generic = self.generic_var.get()
         if selected_generic and selected_generic in self.generic_dict:
-            # Set the corresponding brand name
-            med_id, brand = self.generic_dict[selected_generic]
+            # Set the corresponding brand name, quantity and administration
+            med_id, brand, quantity, admin = self.generic_dict[selected_generic]
             self.brand_var.set(brand)
+            
+            # Only set quantity and administration if they have values
+            if quantity:
+                self.quantity_entry.delete(0, tk.END)
+                self.quantity_entry.insert(0, quantity)
+            
+            if admin:
+                self.admin_var.set(admin)
     
     def add_to_list(self):
         # Get values from inputs
@@ -283,6 +299,8 @@ class MedicationManagementWindow:
         # Get values from inputs
         brand = self.brand_var.get()
         generic = self.generic_var.get()
+        quantity = self.quantity_entry.get()
+        administration = self.admin_var.get()
         
         # Validate inputs
         if not (brand and generic):
@@ -292,7 +310,7 @@ class MedicationManagementWindow:
         # Check if medicine already exists in DB
         existing_medicine = None
         if brand in self.medicine_dict:
-            existing_medicine = (self.medicine_dict[brand][0], brand, generic)
+            existing_medicine = (self.medicine_dict[brand][0], brand, generic, quantity, administration)
         
         if existing_medicine:
             # Confirm overwrite
@@ -304,19 +322,19 @@ class MedicationManagementWindow:
             if response:
                 # Update existing medicine
                 try:
-                    self.db.update_medicine((generic, existing_medicine[0]))
+                    self.db.update_medicine((generic, quantity, administration, existing_medicine[0]))
                     messagebox.showinfo("Success", f"Medicine '{brand}' updated successfully!")
                     self.load_medicines()  # Refresh medicine list
                 except Exception as e:
                     messagebox.showerror("Error", f"An error occurred: {str(e)}")
-            else:
-                # Add new medicine
-                try:
-                    self.db.add_medicine((brand, generic))  # Remove the third parameter for type
-                    messagebox.showinfo("Success", f"Medicine '{brand}' added successfully!")
-                    self.load_medicines()  # Refresh medicine list
-                except Exception as e:
-                    messagebox.showerror("Error", f"An error occurred: {str(e)}")
+        else:
+            # Add new medicine
+            try:
+                self.db.add_medicine((brand, generic, quantity, administration))
+                messagebox.showinfo("Success", f"Medicine '{brand}' added successfully!")
+                self.load_medicines()  # Refresh medicine list
+            except Exception as e:
+                messagebox.showerror("Error", f"An error occurred: {str(e)}")
     
     def delete_from_database(self):
         # Get values from inputs
