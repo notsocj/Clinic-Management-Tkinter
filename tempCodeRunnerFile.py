@@ -1,1 +1,1 @@
-open_lab_charts
+            formatted_text += f"{generic} {brand}\n"

@@ -15,11 +15,96 @@ from PIL import Image, ImageDraw, ImageFont
 from tkinter import filedialog
 from lab_charts import LabChartsWindow
 
+# Replace the AutocompleteCombobox class with this updated version
+class AutocompleteCombobox(ttk.Combobox):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_selecting = False
+        
+        # Override the standard bindings to disable automatic dropdown
+        self.bind("<KeyRelease>", self._on_key_release)
+        self.bind("<<ComboboxSelected>>", self._on_selection)
+        self.bind("<Down>", self._on_down)
+        
+        # Disable the built-in Combobox postcommand that shows the dropdown
+        self._original_postcommand = self.cget('postcommand')
+        self.config(postcommand=self._prevent_auto_post)
+        
+    def _prevent_auto_post(self):
+        """Override default dropdown behavior to prevent it from showing automatically"""
+        # Call original postcommand to update values, but don't show dropdown
+        if callable(self._original_postcommand):
+            self._original_postcommand()
+    
+    def _on_key_release(self, event):
+        """Handle key release to update matches but not show dropdown"""
+        # Skip processing for navigational keys
+        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'Escape'):
+            return
+        
+        # Update matches without showing dropdown
+        self.after(1, lambda: check_name_match(event))
+    
+    def _on_selection(self, event):
+        """Handle selection when dropdown is explicitly shown"""
+        self._is_selecting = True
+        # Call the original selection handler
+        on_name_select(event)
+        self._is_selecting = False
+        return "break"  # Prevent default behavior
+    
+    def _on_down(self, event):
+        """Custom down arrow handler to allow explicit dropdown show"""
+        # Only show dropdown when Down arrow is pressed
+        if self.cget('values'):
+            self.event_generate('<Down>')
+            return "break"  # Handle it ourselves
+        return  # Let default handler work
+
+# Update the check_name_match function to populate values but NOT show dropdown
+def check_name_match(event=None):
+    """Filter dropdown list based on typed text but don't show the dropdown"""
+    current_text = entry_name.get().strip()
+    
+    # When text is empty, set values but don't show dropdown
+    if not current_text:
+        sorted_names = sorted(list(patient_dict.keys()))[:20]  # Limit to 20 names
+        entry_name['values'] = sorted_names
+        return
+    
+    # Filter patient names based on typed text
+    matching_names = []
+    
+    # First priority: names that start with the typed text
+    for name in patient_dict.keys():
+        if name.lower().startswith(current_text.lower()):
+            matching_names.append(name)
+    
+    # Second priority: names containing the typed text (if few starting matches)
+    if len(matching_names) < 5:
+        for name in patient_dict.keys():
+            if not name.lower().startswith(current_text.lower()) and current_text.lower() in name.lower():
+                matching_names.append(name)
+    
+    # Update values but DO NOT show dropdown
+    if matching_names:
+        matching_names.sort()
+        entry_name['values'] = matching_names
+    else:
+        entry_name['values'] = ["No matches found"]
+
+# Add a new function to allow showing dropdown on demand
+def show_patient_dropdown(event=None):
+    """Function to explicitly show the patient dropdown when requested"""
+    if entry_name['values']:
+        entry_name.event_generate('<Down>')
+
 # Main Application Window
 root = tk.Tk()
 root.title("Clinic Management System")
 root.geometry("1200x700")  # Increased width to accommodate sidebar
 root.configure(bg="#e6f7ff")  # Light blue background
+
 
 # Color scheme
 PRIMARY_COLOR = "#3498db"  # Blue
@@ -67,45 +152,70 @@ def save_record():
         db = DatabaseHelper()
         patient_name = entry_name.get()
         
+        if not patient_name:
+            messagebox.showwarning("Warning", "Please enter a patient name.")
+            return
+            
         # Check if patient already exists
         existing_patient = db.get_patient_by_name(patient_name)
         patient_id = None
+        is_new_patient = False
         
-        if (existing_patient):
-            response = messagebox.askyesno(
-                "Patient Exists", 
-                f"Patient '{patient_name}' already exists. Do you want to add a new checkup record?",
-                icon='warning'
+        if existing_patient:
+            patient_id = existing_patient[0]  # Get existing patient's ID
+            
+            # Update patient's basic information
+            patient_data = (
+                entry_name.get(),
+                entry_address.get(),
+                selected_date.get(),
+                entry_phone.get(),
+                status_var.get(),
+                gender_var.get(),
+                patient_id  # Last parameter for WHERE clause in update query
             )
-            if response:
-                patient_id = existing_patient[0]  # Get existing patient's ID
-            else:
-                return
+            db.update_patient(patient_data)
         else:
             # Save new patient data
+            is_new_patient = True
             patient_data = (
                 patient_name,
                 entry_address.get(),
-                selected_date.get(),  # Using selected_date instead of birthdate_cal
+                selected_date.get(),
                 entry_phone.get(),
                 status_var.get(),
                 gender_var.get()
             )
             patient_id = db.add_patient(patient_data)
         
-        # Save checkup data - updated to match database structure
+        # Check for existing checkup for today
         current_date = datetime.now().strftime('%Y-%m-%d')
-        checkup_data = (
-            patient_id,
-            text_remarks.get("1.0", tk.END),  # Use remarks as findings
-            "",          # lab_ids
-            current_date,  # dateOfVisit
-            current_date  # last_checkup_date
-        )
+        existing_checkup = db.get_checkup_by_date(patient_id, current_date)
         
-        checkup_id = db.add_checkup(checkup_data)
+        if existing_checkup:
+            # Update existing checkup for today
+            checkup_data = (
+                text_remarks.get("1.0", tk.END),  # findings
+                existing_checkup[2],  # Keep existing lab_ids
+                entry_bp.get(),  # blood_pressure
+                existing_checkup[0]  # checkup_id
+            )
+            db.update_checkup(checkup_data)
+            
+            # Delete existing prescriptions for updating
+            db.delete_prescriptions_for_checkup(patient_id, current_date)
+        else:
+            # Create a new checkup record
+            checkup_data = (
+                patient_id,
+                text_remarks.get("1.0", tk.END),  # findings
+                "",          # lab_ids
+                current_date,  # dateOfVisit
+                current_date   # last_checkup_date
+            )
+            db.add_checkup(checkup_data)
         
-        # Save prescriptions with updated format
+        # Save prescriptions with current date
         for item in tree_med.get_children():
             values = tree_med.item(item)['values']
             prescription_data = (
@@ -117,25 +227,59 @@ def save_record():
                 current_date  # last_checkup_date
             )
             db.add_prescription(prescription_data)
-            
-        # Display a success message
-        messagebox.showinfo("Success", "Record saved successfully!")
+        
+        # Display success message
+        if is_new_patient:
+            messagebox.showinfo("Success", "New patient record saved successfully!")
+        else:
+            messagebox.showinfo("Success", "Patient record updated successfully!")
         
         # Refresh the patient list and keep the current patient selected
         refresh_patient_list(patient_name)
         load_checkup_history(patient_id)
         
         # Show a visual confirmation that data is refreshed
-        status_label = tk.Label(frame_patient, text="✓ Patient list refreshed", 
-                              bg=ACCENT_COLOR, fg="white", font=("Arial", 10))
+        status_label = tk.Label(frame_patient, text="✓ Patient data saved", 
+                             bg=ACCENT_COLOR, fg="white", font=("Arial", 10))
         status_label.grid(row=5, column=0, columnspan=4, padx=5, pady=5, sticky="ew")
         
-        # Remove the status label after 3 seconds
+        # Remove the status label after 2 seconds
         root.after(2000, status_label.destroy)
         
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
+def load_today_queue():
+    global queue_counter
+    try:
+        db = DatabaseHelper()
+        
+        # Ensure database tables are created
+        db.create_tables()
+        
+        queue_entries = db.get_todays_queue()
+        
+        # Clear existing entries in the treeview
+        for item in tree_queue.get_children():
+            tree_queue.delete(item)
+            
+        # Find highest queue number to set counter
+        highest_queue = 0
+        
+        # Add queue entries to the treeview
+        for entry in queue_entries:
+            queue_id, queue_num, name, queue_time = entry
+            tree_queue.insert("", "end", values=(queue_num, name, queue_time), tags=(str(queue_id),))
+            highest_queue = max(highest_queue, int(queue_num) if isinstance(queue_num, (int, str)) else 0)
+        
+        # Set queue counter to continue from highest number
+        queue_counter = highest_queue
+        
+    except Exception as e:
+        print(f"Error loading queue: {e}")
+      
+
+  
 def update_record():
     try:
         db = DatabaseHelper()
@@ -400,59 +544,77 @@ def open_print_dialog():
     button_frame = tk.Frame(print_dialog, bg=SECONDARY_COLOR, padx=20, pady=15)
     button_frame.pack(fill=tk.X)
     
-    # Define function to print as PDF
-    def print_document_as_pdf():
+    # Define function to print as Word document
+    def print_document_as_word():
         try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib import colors
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from docx import Document
+            from docx.shared import Pt, Inches
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
             import tempfile
             import os
 
             # Get content based on print type
             selected_type = print_type_var.get()
-            fd, pdf_path = tempfile.mkstemp(suffix='.pdf')
+            fd, docx_path = tempfile.mkstemp(suffix='.docx')
             os.close(fd)
-            doc = SimpleDocTemplate(pdf_path, pagesize=A4,
-                                    rightMargin=72, leftMargin=72,
-                                    topMargin=72, bottomMargin=72)
-            styles = getSampleStyleSheet()
-            title_style = ParagraphStyle('TitleStyle', parent=styles['Normal'], fontSize=14, spaceAfter=6, spaceBefore=6, fontName='Helvetica-Bold')
-            normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=11, spaceAfter=4, spaceBefore=4)
-            elements = []
-
-            current_date = datetime.now().strftime("%B %d, %Y")
-
+            doc = Document()
+            
+            # Get patient information
             patient_name = entry_name.get().upper()
             patient_age = entry_age.get()
             patient_address = entry_address.get()
+            current_date = datetime.now().strftime("%B %d, %Y")
+            
+            # Get patient gender - first character only (M or F)
+            patient_gender = ""
+            if gender_var.get():
+                patient_gender = gender_var.get()[0]  # First character only (M or F)
 
+            # Format age with gender if available
+            formatted_age = patient_age
+            if patient_gender and patient_age:
+                formatted_age = f"{patient_gender} / {patient_age}"
 
-            # Create patient header as a table for proper alignment
-            patient_data = [[
-                Paragraph(f"<b>{patient_name}</b>", normal_style),
-                Paragraph(f"<b>AGE:</b> {patient_age}" if patient_age else "", normal_style)
-            ]]
-            patient_table = Table(patient_data, colWidths=[350, 100])  # Adjust column widths as needed
-            patient_table.setStyle(TableStyle([
-                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),  # Align age to the right
-                ('VALIGN', (0, 0), (-1, -1), 'TOP')  # Align text to the top
-            ]))
-
-            elements.append(patient_table)
-
-            # Add address below the name
-            if patient_address:
-                indent_style = ParagraphStyle('IndentStyle', parent=normal_style, leftIndent=30)
-                elements.append(Paragraph(patient_address, indent_style))
-
-            elements.append(Spacer(1, 12))  # Maintain spacing
-            elements.append(Spacer(1, 12))
-
+            # Create header with patient info - using a table for layout
+            header_table = doc.add_table(rows=2, cols=2)
+            header_table.autofit = False
+            
+            # Name and date (first row)
+            name_cell = header_table.cell(0, 0)
+            name_run = name_cell.paragraphs[0].add_run(patient_name)
+            name_run.bold = True
+            name_run.font.size = Pt(12)
+            
+            date_cell = header_table.cell(0, 1)
+            date_para = date_cell.paragraphs[0]
+            date_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            date_para.add_run(current_date)
+            
+            # Address and age (second row)
+            addr_cell = header_table.cell(1, 0)
+            addr_para = addr_cell.paragraphs[0]
+            addr_para.paragraph_format.left_indent = Inches(0.2)
+            addr_para.add_run(patient_address)
+            
+            age_cell = header_table.cell(1, 1)
+            if formatted_age:
+                age_para = age_cell.paragraphs[0]
+                age_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                age_para.add_run(formatted_age)
+            
+            # Add space after header
+            doc.add_paragraph()
+            
+            # Add content based on print type
             if selected_type == "Prescription":
-                elements.append(Spacer(1, 20))
-
+                heading = doc.add_paragraph()
+                heading_run = heading.add_run("PRESCRIPTION")
+                heading_run.bold = True
+                heading_run.font.size = Pt(14)
+                
+                doc.add_paragraph("_" * 65)  # Separator line
+                doc.add_paragraph()  # Empty space
+                
                 if tree_med.get_children():
                     for idx, item in enumerate(tree_med.get_children()):
                         values = tree_med.item(item)['values']
@@ -461,41 +623,63 @@ def open_print_dialog():
                         quantity = values[2]
                         admin = values[3]
                         
-                        indent_style = ParagraphStyle('IndentStyle', parent=normal_style, leftIndent=60)
-
-                        elements.append(Paragraph(f"<b>{generic}</b>", indent_style))
-                        elements.append(Paragraph(f"{brand} #{quantity}", indent_style))
-                        elements.append(Paragraph(f"{admin}", indent_style))
-                     
+                        # Format medication similar to PDF structure
+                        generic_para = doc.add_paragraph()
+                        generic_para.paragraph_format.left_indent = Inches(0.5)
+                        generic_run = generic_para.add_run(f"• {generic}")
+                        generic_run.bold = True
+                        
+                        brand_para = doc.add_paragraph()
+                        brand_para.paragraph_format.left_indent = Inches(0.6)
+                        brand_para.add_run(f"{brand} #{quantity}")
+                        
+                        admin_para = doc.add_paragraph()
+                        admin_para.paragraph_format.left_indent = Inches(0.6)
+                        admin_para.add_run(f"{admin}")
+                        
+                        # Add separator between medications
                         if idx < len(tree_med.get_children()) - 1:
-                            elements.append(Paragraph("------------------------------------------", indent_style))
-                        elements.append(Spacer(1, 6))
+                            sep_para = doc.add_paragraph()
+                            sep_para.add_run("_" * 65)
+                            doc.add_paragraph()  # Add space
                 else:
-                    elements.append(Paragraph("No medications prescribed.", normal_style))
-            else:
-                elements.append(Paragraph("FINDINGS & REMARKS", title_style))
-                elements.append(Spacer(1, 12))
-
+                    doc.add_paragraph("No medications prescribed.")
+            else:  # Findings
+                heading = doc.add_paragraph()
+                heading_run = heading.add_run("FINDINGS & REMARKS")
+                heading_run.bold = True
+                heading_run.font.size = Pt(14)
+                
+                doc.add_paragraph("_" * 65)  # Separator line
+                doc.add_paragraph()  # Empty space
+                
                 findings_text = text_remarks.get("1.0", tk.END).strip()
                 if findings_text:
                     for line in findings_text.split('\n'):
                         if line.strip():
-                            elements.append(Paragraph(line, normal_style))
-                            elements.append(Spacer(1, 6))
+                            bullet_para = doc.add_paragraph()
+                            bullet_para.paragraph_format.left_indent = Inches(0.2)
+                            bullet_para.add_run(f"• {line}")
                 else:
-                    elements.append(Paragraph("No findings recorded.", normal_style))
+                    doc.add_paragraph("No findings recorded.")
             
-            doc.build(elements)
-            os.startfile(pdf_path)
+            # Add footer
+            doc.add_paragraph()
+            doc.add_paragraph("_" * 65)
+            footer = doc.add_paragraph("This document was printed from Clinic Management System")
+            
+            # Save the document
+            doc.save(docx_path)
+            os.startfile(docx_path)
         except Exception as e:
-            messagebox.showerror("PDF Error", f"Failed to create PDF: {str(e)}")
+            messagebox.showerror("Word Error", f"Failed to create Word document: {str(e)}")
 
     
-    # Print as PDF button
-    pdf_button = tk.Button(button_frame, text="Print as PDF", bg=PRIMARY_COLOR, fg=BUTTON_TEXT_COLOR, 
+    # Print as Word button
+    word_button = tk.Button(button_frame, text="Print as Word", bg=PRIMARY_COLOR, fg=BUTTON_TEXT_COLOR, 
                           font=("Arial", 10, "bold"), padx=20, pady=8, 
-                          command=print_document_as_pdf)
-    pdf_button.pack(side=tk.RIGHT, padx=5)
+                          command=print_document_as_word)
+    word_button.pack(side=tk.RIGHT, padx=5)
     
     # Regular Print button
     print_button = tk.Button(button_frame, text="Print", bg=ACCENT_COLOR, fg=BUTTON_TEXT_COLOR, 
@@ -569,40 +753,149 @@ def get_formatted_prescription(patient_name):
     return formatted_text
 
 def print_document(print_type):
-    """Handle the actual printing process"""
+    """Handle the actual printing process with Word document generation and direct printing"""
     try:
-        # Determine what to print based on the type
-        if print_type == "Prescription":
-            content = get_formatted_prescription(entry_name.get())
-        else:  # Findings
-            content = text_remarks.get("1.0", tk.END).strip()
+        # Create a temporary Word document file for printing
+        fd, path = tempfile.mkstemp(suffix='.docx')
+        os.close(fd)
         
-        # Create a temporary file for printing
-        fd, path = tempfile.mkstemp(suffix='.txt')
-        try:
-            with os.fdopen(fd, 'w') as temp:
-                # We don't need to add patient name at the top here as it's already
-                # included in the formatted prescription content
-                temp.write(content)
+        # Use python-docx to create a Word document
+        from docx import Document
+        from docx.shared import Pt, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        
+        # Create document
+        doc = Document()
+        
+        # Get patient information
+        patient_name = entry_name.get().upper()
+        patient_age = entry_age.get()
+        patient_address = entry_address.get()
+        current_date = datetime.now().strftime("%B %d, %Y")
+        
+        # Get patient gender - first character only (M or F)
+        patient_gender = ""
+        if gender_var.get():
+            patient_gender = gender_var.get()[0]  # First character only (M or F)
+
+        # Format age with gender if available
+        formatted_age = patient_age
+        if patient_gender and patient_age:
+            formatted_age = f"{patient_gender} / {patient_age}"
+
+        # Create header with patient info - using a table for layout like in PDF
+        header_table = doc.add_table(rows=2, cols=2)
+        header_table.autofit = False
+        
+        # Name and date (first row)
+        name_cell = header_table.cell(0, 0)
+        name_run = name_cell.paragraphs[0].add_run(patient_name)
+        name_run.bold = True
+        name_run.font.size = Pt(12)
+        
+        date_cell = header_table.cell(0, 1)
+        date_para = date_cell.paragraphs[0]
+        date_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        date_para.add_run(current_date)
+        
+        # Address and age (second row)
+        addr_cell = header_table.cell(1, 0)
+        addr_para = addr_cell.paragraphs[0]
+        addr_para.paragraph_format.left_indent = Inches(0.2)
+        addr_para.add_run(patient_address)
+        
+        age_cell = header_table.cell(1, 1)
+        if formatted_age:
+            age_para = age_cell.paragraphs[0]
+            age_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            age_para.add_run(formatted_age)
+        
+        # Add space after header
+        doc.add_paragraph()
+        
+        # Add content based on print type
+        if print_type == "Prescription":
+            heading = doc.add_paragraph()
+            heading_run = heading.add_run("PRESCRIPTION")
+            heading_run.bold = True
+            heading_run.font.size = Pt(14)
             
-            # Open the file with the default application and print
-            if os.name == 'nt':  # Windows
-                os.startfile(path, "print")
-            else:  # macOS and Linux
-                subprocess.call(['lpr', path])
-                
-            messagebox.showinfo("Print", "Document sent to printer.")
-        finally:
-            # Clean up the temp file after a delay to allow printing
-            def cleanup():
-                try:
-                    os.unlink(path)
-                except:
-                    pass
-            root.after(10000, cleanup)  # 10 seconds delay
+            doc.add_paragraph("_" * 65)  # Separator line
+            doc.add_paragraph()  # Empty space
             
+            if tree_med.get_children():
+                for idx, item in enumerate(tree_med.get_children()):
+                    values = tree_med.item(item)['values']
+                    brand = values[0]
+                    generic = values[1]
+                    quantity = values[2]
+                    admin = values[3]
+                    
+                    # Format medication similar to PDF structure
+                    generic_para = doc.add_paragraph()
+                    generic_para.paragraph_format.left_indent = Inches(0.5)
+                    generic_run = generic_para.add_run(f"• {generic}")
+                    generic_run.bold = True
+                    
+                    brand_para = doc.add_paragraph()
+                    brand_para.paragraph_format.left_indent = Inches(0.6)
+                    brand_para.add_run(f"{brand} #{quantity}")
+                    
+                    admin_para = doc.add_paragraph()
+                    admin_para.paragraph_format.left_indent = Inches(0.6)
+                    admin_para.add_run(f"{admin}")
+                    
+                    # Add separator between medications
+                    if idx < len(tree_med.get_children()) - 1:
+                        sep_para = doc.add_paragraph()
+                        sep_para.add_run("_" * 65)
+                        doc.add_paragraph()  # Add space
+            else:
+                doc.add_paragraph("No medications prescribed.")
+        else:  # Findings
+            heading = doc.add_paragraph()
+            heading_run = heading.add_run("FINDINGS & REMARKS")
+            heading_run.bold = True
+            heading_run.font.size = Pt(14)
+            
+            doc.add_paragraph("_" * 65)  # Separator line
+            doc.add_paragraph()  # Empty space
+            
+            findings_text = text_remarks.get("1.0", tk.END).strip()
+            if findings_text:
+                for line in findings_text.split('\n'):
+                    if line.strip():
+                        bullet_para = doc.add_paragraph()
+                        bullet_para.paragraph_format.left_indent = Inches(0.2)
+                        bullet_para.add_run(f"• {line}")
+            else:
+                doc.add_paragraph("No findings recorded.")
+        
+        # Add footer
+        doc.add_paragraph()
+        doc.add_paragraph("_" * 65)
+        footer = doc.add_paragraph("This document was printed from Clinic Management System")
+        
+        # Save the document
+        doc.save(path)
+        
+        # Open the Word document file for printing
+        if os.name == 'nt':  # Windows
+            os.startfile(path, "print")
+        else:  # macOS and Linux
+            subprocess.call(['lpr', path])
+            
+        messagebox.showinfo("Print", "Document sent to printer.")
     except Exception as e:
         messagebox.showerror("Print Error", f"Failed to print: {str(e)}")
+    finally:
+        # Clean up the temp file after a delay to allow printing
+        def cleanup():
+            try:
+                os.unlink(path)
+            except:
+                pass
+        root.after(10000, cleanup)  # 10 seconds delay
         
 def open_lab_charts(new_files=None):
     """Open the Lab/Charts window with any newly selected files"""
@@ -652,8 +945,14 @@ frame_patient.place(x=10, y=10, width=650, height=320)
 
 # Left column of patient info
 tk.Label(frame_patient, text="Name:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=0, column=0, padx=5, pady=5, sticky="w")
-entry_name = ttk.Combobox(frame_patient, width=37)
-entry_name.grid(row=0, column=1, padx=5, pady=5)
+
+name_frame = tk.Frame(frame_patient, bg=SECONDARY_COLOR)
+name_frame.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+entry_name = AutocompleteCombobox(name_frame, width=37)
+entry_name.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+
 
 tk.Label(frame_patient, text="Address:", bg=SECONDARY_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, padx=5, pady=5, sticky="w")
 entry_address = ttk.Entry(frame_patient, width=40)
@@ -800,24 +1099,66 @@ def add_to_queue():
     global queue_counter
     name = entry_name.get()
     if name:
-        queue_counter += 1
-        current_time = datetime.now().strftime("%H:%M")
-        tree_queue.insert("", "end", values=(queue_counter, name, current_time))
-        # Save to Queue table using DatabaseHelper
         try:
+            # Get current time
+            current_time = datetime.now().strftime("%H:%M")
+            
+            # Create or verify the Queue table structure first
             db = DatabaseHelper()
-            db.add_to_queue((queue_counter, name, current_time))
-            # Refresh patient list after adding to queue
-            refresh_patient_list(name)
+            db.create_tables()
+            
+            # Increment queue counter
+            queue_counter += 1
+            
+            # Save to database 
+            queue_id = db.add_to_queue((queue_counter, name, current_time))
+            
+            if queue_id:
+                # Add to treeview with the queue_id as a tag
+                tree_queue.insert("", "end", values=(queue_counter, name, current_time), tags=(str(queue_id),))
+                
+                # Refresh patient list after adding to queue
+                refresh_patient_list(name)
+                
+                # Show confirmation
+                status_label = tk.Label(frame_queue, text="✓ Added to queue", 
+                                      bg=ACCENT_COLOR, fg="white", font=("Arial", 9))
+                status_label.place(relx=0.5, rely=0.92, anchor="center")
+                # Remove after 2 seconds
+                root.after(2000, status_label.destroy)
+            else:
+                # Try to recreate the Queue table and try again
+                db.create_tables()
+                queue_id = db.add_to_queue((queue_counter, name, current_time))
+                
+                if queue_id:
+                    tree_queue.insert("", "end", values=(queue_counter, name, current_time), tags=(str(queue_id),))
+                    refresh_patient_list(name)
+                else:
+                    messagebox.showerror("Database Error", "Failed to add patient to queue after multiple attempts.")
+                    queue_counter -= 1  # Rollback counter increment
+                
         except Exception as e:
+            # Show detailed error message
             messagebox.showerror("Error", f"Could not save to queue: {str(e)}")
+            queue_counter -= 1  # Rollback counter increment
     else:
-        messagebox.showwarning("Input Error", "Enter patient name!")
+        messagebox.showwarning("Input Error", "Please enter patient name first.")
 
 def remove_from_queue():
     selected_item = tree_queue.selection()
     if selected_item:
-        tree_queue.delete(selected_item)
+        # Get the queue_id from the item's tags
+        queue_id = tree_queue.item(selected_item, "tags")[0]
+        
+        try:
+            db = DatabaseHelper()
+            if db.remove_from_queue(queue_id):
+                tree_queue.delete(selected_item)
+            else:
+                messagebox.showerror("Database Error", "Failed to remove patient from queue.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not remove from queue: {str(e)}")
     else:
         messagebox.showwarning("Selection Error", "Select a patient to remove from queue!")
 
@@ -836,8 +1177,8 @@ text_remarks.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
 # Add scrollbar to remarks
 remarks_scrollbar = ttk.Scrollbar(frame_remarks, orient="vertical", command=text_remarks.yview)
-text_remarks.configure(yscroll=remarks_scrollbar.set)
-remarks_scrollbar.place(relx=0.97, rely=0.05, relheight=0.9)
+text_remarks.configure(yscrollcommand=remarks_scrollbar.set)
+remarks_scrollbar.place(relx=0.97, relheight=0.9)
 
 # ----------------- Prescription Section ----------------- #
 frame_med = tk.LabelFrame(content_frame, text="PRESCRIPTION/MEDICATION", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 12, "bold"))
@@ -858,7 +1199,7 @@ tree_med.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 # Add scrollbar to prescription
 med_scrollbar = ttk.Scrollbar(frame_med, orient="vertical", command=tree_med.yview)
 tree_med.configure(yscroll=med_scrollbar.set)
-med_scrollbar.place(relx=0.97, rely=0.05, relheight=0.7)
+med_scrollbar.place(relx=0.97, relheight=0.7)
 
 # Button frame for medication management
 med_button_frame = tk.Frame(frame_med, bg=SECONDARY_COLOR)
@@ -1016,47 +1357,6 @@ def on_name_select(event=None):
             except Exception as e:
                 print(f"Error loading patient data: {e}")
 
-# Add this function to check for exact name matches and show the dropdown
-def check_name_match(event=None):
-    current_text = entry_name.get().strip()
-    
-    # When text is empty or very short, show all patients
-    if len(current_text) < 1:
-        # Get the full sorted list of patient names
-        sorted_names = sorted(list(patient_dict.keys()))
-        entry_name['values'] = sorted_names
-        return
-        
-    # Get the list of matching patient names for filtering
-    matching_names = []
-    for name in patient_dict.keys():
-        if current_text.lower() in name.lower():
-            matching_names.append(name)
-    
-    # If we have matches, update the dropdown values
-    if matching_names:
-        # Sort the matching names for better user experience
-        matching_names.sort()
-        entry_name['values'] = matching_names
-        
-        # If there's an exact match, show the dropdown
-        exact_match = False
-        for name in matching_names:
-            if current_text.lower() == name.lower():
-                exact_match = True
-                break
-        
-        # Show dropdown on exact match
-        if exact_match:
-            entry_name.event_generate('<Down>')
-    else:
-        # If no matches, show a message in the dropdown
-        entry_name['values'] = ["No matches found"]
-
-# Now add the bindings after the functions are defined
-entry_name.bind('<<ComboboxSelected>>', on_name_select)
-entry_name.bind('<KeyRelease>', check_name_match)
-
 # Modify the queue system to allow editing
 def edit_queue_item(event=None):
     selected_item = tree_queue.selection()
@@ -1086,13 +1386,16 @@ def on_date_input(event=None):
             # If successful, update age
             today = date.today()
             age = today.year - date_obj.year - ((today.month, today.day) < (date_obj.month, date_obj.day))
-            entry_age.delete(0, tk.END)
-            entry_age.insert(0, str(age))
+            
+            # Safely update the age entry
+            entry_age.delete(0, 'end')  # Use string 'end' instead of tk.END
+            entry_age.insert(0, str(age))  # Insert at position 0
+            
             birthdate_entry.config(foreground="black")
     except ValueError:
         # If date is invalid, show in red but don't update age
         birthdate_entry.config(foreground="red")
-        
+
 # Near where birthdate_entry is created, add these bindings
 birthdate_entry.bind("<KeyRelease>", on_date_input)
 birthdate_entry.bind("<FocusOut>", on_date_input)
@@ -1101,13 +1404,15 @@ birthdate_entry.bind("<FocusOut>", on_date_input)
 birthdate_entry.insert(0, "YYYY-MM-DD")
 birthdate_entry.config(foreground="gray")
 
+# Fix the placeholder text handlers
 def on_entry_focus_in(event):
     if birthdate_entry.get() == "YYYY-MM-DD":
-        birthdate_entry.delete(0, tk.END)
+        birthdate_entry.delete(0, 'end')  # Use string 'end' instead of tk.END
         birthdate_entry.config(foreground="black")
 
 def on_entry_focus_out(event):
     if not birthdate_entry.get():
+        birthdate_entry.delete(0, 'end')  # Use string 'end' instead of tk.END
         birthdate_entry.insert(0, "YYYY-MM-DD")
         birthdate_entry.config(foreground="gray")
     else:
@@ -1378,4 +1683,18 @@ def show_checkup_notification(checkup):
 # Add a global variable to store current checkups data
 current_checkups = []
 
+# Initialize queue from database
+try:
+    # Initialize the database first
+    db = DatabaseHelper()
+    db.create_tables()
+    
+    # Load today's queue
+    load_today_queue()
+    
+    # Clean up old queue entries (older than 7 days)
+    db.clear_old_queue(7)
+except Exception as e:
+    print(f"Error initializing queue: {e}")
+    
 root.mainloop()

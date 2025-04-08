@@ -4,7 +4,97 @@ from datetime import datetime
 class DatabaseHelper:
     def __init__(self, db_path='Login.db'):
         self.db_path = db_path
+        self.create_tables()
 
+    def create_tables(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if Queue table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Queue'")
+            if cursor.fetchone():
+                # Table exists - check if it has required columns
+                cursor.execute("PRAGMA table_info(Queue)")
+                columns = [col[1] for col in cursor.fetchall()]
+                
+                # If table structure is incorrect, drop and recreate
+                if 'queue_number' not in columns or 'queue_date' not in columns:
+                    cursor.execute("DROP TABLE IF EXISTS Queue")
+                    create_queue = True
+                else:
+                    create_queue = False
+            else:
+                create_queue = True
+                
+            # Create Queue table if needed
+            if create_queue:
+                cursor.execute('''
+                    CREATE TABLE Queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        queue_number INTEGER,
+                        patient_name TEXT,
+                        queue_time TEXT,
+                        queue_date TEXT DEFAULT CURRENT_DATE,
+                        status TEXT DEFAULT 'waiting'
+                    )
+                ''')
+                
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error in create_tables: {e}")
+        finally:
+            conn.close()
+        
+    def update_queue_status(self, queue_id, status):
+        """Update a queue entry's status (waiting/completed/cancelled)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE Queue SET status = ? WHERE id = ?", (status, queue_id))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def get_todays_queue(self):
+        """Get all patients in today's queue"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute('''
+                SELECT id, queue_number, patient_name, queue_time
+                FROM Queue
+                WHERE queue_date = ? AND status = 'waiting'
+                ORDER BY queue_number
+            ''', (today,))
+            return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return []
+        finally:
+            conn.close()
+            
+    def clear_old_queue(self, days=7):
+        """Clear queue entries older than specified days"""
+        from datetime import datetime, timedelta  # Import here to avoid circular imports
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Calculate cutoff date
+            cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            cursor.execute("DELETE FROM Queue WHERE queue_date < ?", (cutoff_date,))
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error in clear_old_queue: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
     def get_connection(self):
         return sqlite3.connect(self.db_path)
 
@@ -42,6 +132,24 @@ class DatabaseHelper:
         conn.close()
         return labs
 
+    def update_patient(self, patient_data):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE Patients
+                SET name = ?, address = ?, birthdate = ?, phone = ?, civil_status = ?, gender = ?
+                WHERE id = ?
+            """, patient_data)
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+            
     def add_patient(self, patient_data):
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -136,12 +244,47 @@ class DatabaseHelper:
         conn.close()
         return patient
 
-    def add_to_queue(self, queue_data):
+    def remove_from_queue(self, queue_id):
+        """Remove a patient from the queue"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO Queue (Pname) VALUES (?)", (queue_data[1],))
-        conn.commit()
-        conn.close()
+        try:
+            cursor.execute("DELETE FROM Queue WHERE id = ?", (queue_id,))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+            
+    def add_to_queue(self, queue_data):
+        """Add a patient to the queue"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Ensure the Queue table exists
+            self.create_tables()
+            
+            # queue_data should be (queue_number, patient_name, queue_time)
+            queue_number, patient_name, queue_time = queue_data
+            queue_date = datetime.now().strftime('%Y-%m-%d')
+            
+            cursor.execute('''
+                INSERT INTO Queue (queue_number, patient_name, queue_time, queue_date, status)
+                VALUES (?, ?, ?, ?, 'waiting')
+            ''', (queue_number, patient_name, queue_time, queue_date))
+            
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"Database error in add_to_queue: {e}")
+            conn.rollback()
+            return None  # Return None to indicate failure
+        finally:
+            conn.close()
+
 
     def get_patient_by_name(self, name):
         conn = self.get_connection()
@@ -180,6 +323,7 @@ class DatabaseHelper:
             raise
         finally:
             conn.close()
+            
     
     def update_medicine(self, medicine_data):
         """Update an existing medicine in the database including quantity and administration"""

@@ -1,6 +1,53 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from db_helper import DatabaseHelper
+from tkinter import Tk, Label, Entry, Button
+
+# Update the MedAutoCompleteCombobox class with improved dropdown prevention
+class MedAutoCompleteCombobox(ttk.Combobox):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_selecting = False
+        
+        # Override the key bindings to disable automatic dropdown
+        self.bind("<KeyRelease>", self._on_key_release)
+        self.bind("<<ComboboxSelected>>", self._on_selection)
+        self.bind("<Down>", self._on_down)
+        
+        # Disable the built-in Combobox postcommand that shows the dropdown
+        self._original_postcommand = self.cget('postcommand')
+        self.config(postcommand=self._prevent_auto_post)
+        
+    def _prevent_auto_post(self):
+        """Override default dropdown behavior to prevent it from showing automatically"""
+        # Call original postcommand to update values, but don't show dropdown
+        if callable(self._original_postcommand):
+            self._original_postcommand()
+    
+    def _on_key_release(self, event):
+        """Handle key release events to filter dropdown without losing focus"""
+        # Skip processing special keys
+        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'Escape'):
+            return
+        
+        # Get current text and update matches
+        current_text = self.get().strip()
+        self.after(1, lambda: self.master.on_brand_key_release(event))
+    
+    def _on_selection(self, event):
+        """Handle selection when dropdown is explicitly shown"""
+        self._is_selecting = True
+        # Call the original handler
+        self._is_selecting = False
+        return  # Allow default behavior
+        
+    def _on_down(self, event):
+        """Custom down arrow handler to allow explicit dropdown show"""
+        # Only show dropdown when Down arrow is pressed
+        if self.cget('values'):
+            self.event_generate('<Down>')
+            return "break"  # Handle it ourselves
+        return  # Let default handler work
 
 class MedicationManagementWindow:
     def __init__(self, parent, callback=None):
@@ -27,6 +74,9 @@ class MedicationManagementWindow:
         # Current medications list
         self.medications = []
         
+        # Notification label (added for in-window notifications)
+        self.notification_label = None
+        
         # Create UI elements
         self.create_widgets()
         self.load_medicines()
@@ -36,16 +86,27 @@ class MedicationManagementWindow:
         main_frame = tk.Frame(self.window, bg=self.SECONDARY_COLOR)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
+        # Notification area - Add this new frame
+        self.notification_frame = tk.Frame(main_frame, bg=self.SECONDARY_COLOR)
+        self.notification_frame.pack(fill=tk.X, padx=5, pady=5)
+        
         # Input section
         input_frame = tk.LabelFrame(main_frame, text="Medication Details", bg=self.SECONDARY_COLOR, fg=self.TEXT_COLOR, font=("Arial", 11, "bold"))
         input_frame.pack(fill=tk.X, padx=5, pady=5)
         
         # Brand selection
         tk.Label(input_frame, text="Brand Name:", bg=self.SECONDARY_COLOR, fg=self.TEXT_COLOR).grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        
+        # Create a frame to hold the brand dropdown and button
+        brand_frame = tk.Frame(input_frame, bg=self.SECONDARY_COLOR)
+        brand_frame.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        
         self.brand_var = tk.StringVar()
-        self.brand_dropdown = ttk.Combobox(input_frame, textvariable=self.brand_var, width=30)
-        self.brand_dropdown.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        self.brand_dropdown = MedAutoCompleteCombobox(brand_frame, textvariable=self.brand_var, width=30)
+        self.brand_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.brand_dropdown.bind("<<ComboboxSelected>>", self.on_brand_select)
+        self.brand_dropdown.bind("<KeyRelease>", self.on_brand_key_release)
+        
         
         # Generic selection
         tk.Label(input_frame, text="Generic Name:", bg=self.SECONDARY_COLOR, fg=self.TEXT_COLOR).grid(row=0, column=2, padx=5, pady=5, sticky="w")
@@ -191,7 +252,7 @@ class MedicationManagementWindow:
         
         # Validate inputs
         if not (brand and generic and quantity and administration):
-            messagebox.showwarning("Input Error", "Please fill all fields!")
+            self.show_notification("Please fill all fields!", self.WARNING_COLOR)
             return
         
         try:
@@ -199,7 +260,7 @@ class MedicationManagementWindow:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
         except ValueError:
-            messagebox.showwarning("Input Error", "Quantity must be a positive number!")
+            self.show_notification("Quantity must be a positive number!", self.WARNING_COLOR)
             return
         
         # Get medicine ID if available
@@ -220,13 +281,15 @@ class MedicationManagementWindow:
             "tree_id": item_id
         })
         
+        self.show_notification(f"Added {brand} to the list")
+        
         # Clear inputs
         self.clear_inputs()
     
     def edit_selected(self):
         selected_item = self.tree.selection()
         if not selected_item:
-            messagebox.showwarning("Selection Error", "Please select a medication to edit!")
+            self.show_notification("Please select a medication to edit!", self.WARNING_COLOR)
             return
         
         # Get values from selected item
@@ -245,7 +308,7 @@ class MedicationManagementWindow:
     def delete_selected(self, confirm=True):
         selected_item = self.tree.selection()
         if not selected_item:
-            messagebox.showwarning("Selection Error", "Please select a medication to delete!")
+            self.show_notification("Please select a medication to delete!", self.WARNING_COLOR)
             return
         
         if confirm:
@@ -253,12 +316,19 @@ class MedicationManagementWindow:
             if not response:
                 return
         
+        # Get the name for notification
+        med_name = self.tree.item(selected_item[0])['values'][1]
+        
         # Remove from treeview
         tree_id = selected_item[0]
         self.tree.delete(tree_id)
         
         # Remove from our list
         self.medications = [med for med in self.medications if med["tree_id"] != tree_id]
+        
+        # Show confirmation
+        if confirm:  # Only show notification if not called from edit_selected
+            self.show_notification(f"Deleted {med_name} from the list")
     
     def save_all(self):
         """Save all medications and send them back to main window"""
@@ -276,14 +346,15 @@ class MedicationManagementWindow:
             })
         
         if not all_medications:
-            messagebox.showwarning("Save Error", "No medications to save!")
+            self.show_notification("No medications to save!", self.WARNING_COLOR)
             return
         
         # If we have a callback function, call it with all medications
         if self.callback:
             self.callback(all_medications)
-            messagebox.showinfo("Success", f"{len(all_medications)} medications saved successfully!")
-            self.back_to_main()
+            self.show_notification(f"{len(all_medications)} medications saved successfully!")
+            # Close with a slight delay to allow notification to be seen
+            self.window.after(1500, self.back_to_main)
     
     def back_to_main(self):
         # Close the window
@@ -296,6 +367,7 @@ class MedicationManagementWindow:
         self.admin_var.set("")
     
     def save_to_database(self):
+        """Save the medicine to the database"""
         # Get values from inputs
         brand = self.brand_var.get()
         generic = self.generic_var.get()
@@ -304,7 +376,7 @@ class MedicationManagementWindow:
         
         # Validate inputs
         if not (brand and generic):
-            messagebox.showwarning("Input Error", "Please enter at least Brand and Generic Name!")
+            self.show_notification("Please enter at least Brand and Generic Name!", self.WARNING_COLOR)
             return
         
         # Check if medicine already exists in DB
@@ -323,31 +395,32 @@ class MedicationManagementWindow:
                 # Update existing medicine
                 try:
                     self.db.update_medicine((generic, quantity, administration, existing_medicine[0]))
-                    messagebox.showinfo("Success", f"Medicine '{brand}' updated successfully!")
+                    self.show_notification(f"Medicine '{brand}' updated successfully!")
                     self.load_medicines()  # Refresh medicine list
                 except Exception as e:
-                    messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                    self.show_notification(f"Error: {str(e)}", self.WARNING_COLOR)
         else:
             # Add new medicine
             try:
                 self.db.add_medicine((brand, generic, quantity, administration))
-                messagebox.showinfo("Success", f"Medicine '{brand}' added successfully!")
+                self.show_notification(f"Medicine '{brand}' added successfully!")
                 self.load_medicines()  # Refresh medicine list
             except Exception as e:
-                messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                self.show_notification(f"Error: {str(e)}", self.WARNING_COLOR)
     
     def delete_from_database(self):
+        """Delete the selected medicine from the database"""
         # Get values from inputs
         brand = self.brand_var.get()
         
         # Validate inputs
         if not brand:
-            messagebox.showwarning("Input Error", "Please select a medicine to delete!")
+            self.show_notification("Please select a medicine to delete!", self.WARNING_COLOR)
             return
         
         # Check if medicine exists
         if brand not in self.medicine_dict:
-            messagebox.showwarning("Delete Error", f"Medicine '{brand}' not found in database!")
+            self.show_notification(f"Medicine '{brand}' not found in database!", self.WARNING_COLOR)
             return
         
         # Confirm deletion
@@ -361,8 +434,80 @@ class MedicationManagementWindow:
             try:
                 med_id = self.medicine_dict[brand][0]
                 self.db.delete_medicine(med_id)
-                messagebox.showinfo("Success", f"Medicine '{brand}' deleted successfully!")
+                self.show_notification(f"Medicine '{brand}' deleted successfully!")
                 self.load_medicines()  # Refresh medicine list
                 self.clear_inputs()    # Clear inputs
             except Exception as e:
-                messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                self.show_notification(f"Error: {str(e)}", self.WARNING_COLOR)
+    
+    def show_notification(self, message, bg_color=None, auto_dismiss=True):
+        """Display an in-window notification"""
+        # Clear any existing notification
+        if self.notification_label:
+            self.notification_label.destroy()
+        
+        # Choose color based on message type if not specified
+        if bg_color is None:
+            if "success" in message.lower() or "updated" in message.lower() or "added" in message.lower():
+                bg_color = self.ACCENT_COLOR
+            elif "error" in message.lower() or "failed" in message.lower():
+                bg_color = self.WARNING_COLOR
+            else:
+                bg_color = self.PRIMARY_COLOR
+        
+        # Create notification label
+        self.notification_label = tk.Label(
+            self.notification_frame,
+            text=message,
+            bg=bg_color,
+            fg="white",
+            font=("Arial", 10, "bold"),
+            padx=10,
+            pady=5,
+            relief=tk.RAISED
+        )
+        self.notification_label.pack(fill=tk.X, pady=5)
+        
+        # Auto-dismiss notification after delay
+        if auto_dismiss:
+            self.window.after(3000, self.clear_notification)
+
+    def clear_notification(self):
+        """Clear the notification if it exists"""
+        if self.notification_label:
+            self.notification_label.destroy()
+            self.notification_label = None
+
+    def on_brand_key_release(self, event=None):
+        """Handle key release in brand dropdown to update values without showing dropdown"""
+        current_text = self.brand_var.get().strip()
+        
+        # Get all brand names
+        all_brands = sorted(list(self.medicine_dict.keys()))
+        
+        # Filter brands based on current text
+        if current_text:
+            # First priority: names that start with the typed text
+            matching_brands = [b for b in all_brands if b.lower().startswith(current_text.lower())]
+            
+            # Second priority: names that contain the typed text (if we have fewer than 5 starting matches)
+            if len(matching_brands) < 5:
+                for brand in all_brands:
+                    if (not brand.lower().startswith(current_text.lower()) and 
+                        current_text.lower() in brand.lower()):
+                        matching_brands.append(brand)
+        else:
+            matching_brands = all_brands
+        
+        # Sort and update the dropdown values but DO NOT show dropdown
+        if matching_brands:
+            matching_brands.sort()
+            self.brand_dropdown['values'] = matching_brands
+        else:
+            self.brand_dropdown['values'] = ["No matches found"]
+
+    def show_brand_dropdown(self):
+        """Explicitly show the brand dropdown when requested"""
+        if self.brand_dropdown['values']:
+            self.brand_dropdown.focus_set()  # Make sure dropdown has focus
+            self.brand_dropdown.event_generate('<Down>')  # Show the dropdown
