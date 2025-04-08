@@ -575,6 +575,11 @@ def open_print_dialog():
             if patient_gender and patient_age:
                 formatted_age = f"{patient_gender} / {patient_age}"
 
+            # Add extra top margin before header table
+            top_margin_para = doc.add_paragraph()
+            top_margin_para = doc.add_paragraph()
+            top_margin_para.space_after = Pt(40)  # Add 24pt spacing after paragraph
+
             # Create header with patient info - using a table for layout
             header_table = doc.add_table(rows=2, cols=2)
             header_table.autofit = False
@@ -587,32 +592,24 @@ def open_print_dialog():
             
             date_cell = header_table.cell(0, 1)
             date_para = date_cell.paragraphs[0]
-            date_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
             date_para.add_run(current_date)
             
             # Address and age (second row)
             addr_cell = header_table.cell(1, 0)
             addr_para = addr_cell.paragraphs[0]
-            addr_para.paragraph_format.left_indent = Inches(0.2)
+            addr_para.paragraph_format.left_indent = Inches(0.4)
             addr_para.add_run(patient_address)
             
             age_cell = header_table.cell(1, 1)
             if formatted_age:
                 age_para = age_cell.paragraphs[0]
-                age_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                age_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
                 age_para.add_run(formatted_age)
             
-            # Add space after header
-            doc.add_paragraph()
             
             # Add content based on print type
             if selected_type == "Prescription":
-                heading = doc.add_paragraph()
-                heading_run = heading.add_run("PRESCRIPTION")
-                heading_run.bold = True
-                heading_run.font.size = Pt(14)
-                
-                doc.add_paragraph("_" * 65)  # Separator line
                 doc.add_paragraph()  # Empty space
                 
                 if tree_med.get_children():
@@ -626,7 +623,7 @@ def open_print_dialog():
                         # Format medication similar to PDF structure
                         generic_para = doc.add_paragraph()
                         generic_para.paragraph_format.left_indent = Inches(0.5)
-                        generic_run = generic_para.add_run(f"• {generic}")
+                        generic_run = generic_para.add_run(f" {generic}")
                         generic_run.bold = True
                         
                         brand_para = doc.add_paragraph()
@@ -637,20 +634,12 @@ def open_print_dialog():
                         admin_para.paragraph_format.left_indent = Inches(0.6)
                         admin_para.add_run(f"{admin}")
                         
-                        # Add separator between medications
+                        # Add space between medications
                         if idx < len(tree_med.get_children()) - 1:
-                            sep_para = doc.add_paragraph()
-                            sep_para.add_run("_" * 65)
                             doc.add_paragraph()  # Add space
                 else:
                     doc.add_paragraph("No medications prescribed.")
             else:  # Findings
-                heading = doc.add_paragraph()
-                heading_run = heading.add_run("FINDINGS & REMARKS")
-                heading_run.bold = True
-                heading_run.font.size = Pt(14)
-                
-                doc.add_paragraph("_" * 65)  # Separator line
                 doc.add_paragraph()  # Empty space
                 
                 findings_text = text_remarks.get("1.0", tk.END).strip()
@@ -662,11 +651,6 @@ def open_print_dialog():
                             bullet_para.add_run(f"• {line}")
                 else:
                     doc.add_paragraph("No findings recorded.")
-            
-            # Add footer
-            doc.add_paragraph()
-            doc.add_paragraph("_" * 65)
-            footer = doc.add_paragraph("This document was printed from Clinic Management System")
             
             # Save the document
             doc.save(docx_path)
@@ -744,9 +728,9 @@ def get_formatted_prescription(patient_name):
             formatted_text += f"{generic} {brand}\n"
             formatted_text += f"#{quantity} {admin}\n"
             
-            # Add separator between medications (except after the last one)
+            # Add spacing between medications (removed separator line)
             if idx < len(tree_med.get_children()) - 1:
-                formatted_text += "\n------------------------------------------\n\n"
+                formatted_text += "\n\n"
     else:
         formatted_text += "No medications prescribed."
     
@@ -755,7 +739,9 @@ def get_formatted_prescription(patient_name):
 def print_document(print_type):
     """Handle the actual printing process with Word document generation and direct printing"""
     try:
+        print_type_var = tk.StringVar(value="Prescription")
         # Create a temporary Word document file for printing
+        selected_type = print_type_var.get()
         fd, path = tempfile.mkstemp(suffix='.docx')
         os.close(fd)
         
@@ -783,7 +769,12 @@ def print_document(print_type):
         if patient_gender and patient_age:
             formatted_age = f"{patient_gender} / {patient_age}"
 
-        # Create header with patient info - using a table for layout like in PDF
+        # Add extra top margin before header table
+        top_margin_para = doc.add_paragraph()
+        top_margin_para = doc.add_paragraph()
+        top_margin_para.space_after = Pt(40)  # Add 24pt spacing after paragraph
+
+        # Create header with patient info - using a table for layout
         header_table = doc.add_table(rows=2, cols=2)
         header_table.autofit = False
         
@@ -795,32 +786,24 @@ def print_document(print_type):
         
         date_cell = header_table.cell(0, 1)
         date_para = date_cell.paragraphs[0]
-        date_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
         date_para.add_run(current_date)
         
         # Address and age (second row)
         addr_cell = header_table.cell(1, 0)
         addr_para = addr_cell.paragraphs[0]
-        addr_para.paragraph_format.left_indent = Inches(0.2)
+        addr_para.paragraph_format.left_indent = Inches(0.4)
         addr_para.add_run(patient_address)
         
         age_cell = header_table.cell(1, 1)
         if formatted_age:
             age_para = age_cell.paragraphs[0]
-            age_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            age_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
             age_para.add_run(formatted_age)
         
-        # Add space after header
-        doc.add_paragraph()
         
         # Add content based on print type
-        if print_type == "Prescription":
-            heading = doc.add_paragraph()
-            heading_run = heading.add_run("PRESCRIPTION")
-            heading_run.bold = True
-            heading_run.font.size = Pt(14)
-            
-            doc.add_paragraph("_" * 65)  # Separator line
+        if selected_type == "Prescription":
             doc.add_paragraph()  # Empty space
             
             if tree_med.get_children():
@@ -834,7 +817,7 @@ def print_document(print_type):
                     # Format medication similar to PDF structure
                     generic_para = doc.add_paragraph()
                     generic_para.paragraph_format.left_indent = Inches(0.5)
-                    generic_run = generic_para.add_run(f"• {generic}")
+                    generic_run = generic_para.add_run(f" {generic}")
                     generic_run.bold = True
                     
                     brand_para = doc.add_paragraph()
@@ -845,20 +828,12 @@ def print_document(print_type):
                     admin_para.paragraph_format.left_indent = Inches(0.6)
                     admin_para.add_run(f"{admin}")
                     
-                    # Add separator between medications
+                    # Add space between medications
                     if idx < len(tree_med.get_children()) - 1:
-                        sep_para = doc.add_paragraph()
-                        sep_para.add_run("_" * 65)
                         doc.add_paragraph()  # Add space
             else:
                 doc.add_paragraph("No medications prescribed.")
         else:  # Findings
-            heading = doc.add_paragraph()
-            heading_run = heading.add_run("FINDINGS & REMARKS")
-            heading_run.bold = True
-            heading_run.font.size = Pt(14)
-            
-            doc.add_paragraph("_" * 65)  # Separator line
             doc.add_paragraph()  # Empty space
             
             findings_text = text_remarks.get("1.0", tk.END).strip()
@@ -870,11 +845,6 @@ def print_document(print_type):
                         bullet_para.add_run(f"• {line}")
             else:
                 doc.add_paragraph("No findings recorded.")
-        
-        # Add footer
-        doc.add_paragraph()
-        doc.add_paragraph("_" * 65)
-        footer = doc.add_paragraph("This document was printed from Clinic Management System")
         
         # Save the document
         doc.save(path)
@@ -1087,7 +1057,7 @@ tree_queue.pack(padx=5, pady=5)
 # Add scrollbar to queue
 scrollbar = ttk.Scrollbar(frame_queue, orient="vertical", command=tree_queue.yview)
 tree_queue.configure(yscroll=scrollbar.set)
-scrollbar.place(relx=0.97, rely=0.28, relheight=0.58)
+scrollbar.place(relx=0.97, relheight=0.58)
 
 queue_frame = tk.Frame(frame_queue, bg=SECONDARY_COLOR)
 queue_frame.pack(pady=5)
