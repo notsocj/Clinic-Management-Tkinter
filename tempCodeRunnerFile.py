@@ -1,2 +1,4 @@
-
-            age_cell = header_table.cell(1, 1)
+            # 8. Add spacing before signature
+            for _ in range(2):
+                doc.add_paragraph()
+            

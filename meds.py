@@ -478,8 +478,8 @@ def open_med_cert():
         "name": entry_name.get(),
         "age": entry_age.get(),
         "address": entry_address.get(),
-        "findings": "",
-        "remarks": text_remarks.get("1.0", tk.END).strip()  # Get the content from remarks field
+        "findings": text_remarks.get("1.0", tk.END).strip(),  # Get the content from diagnosis field
+        "remarks": ""  # Leave remarks empty since we're not using it
     }
     
     # Create and open the medical certificate window
@@ -573,39 +573,46 @@ def open_print_dialog():
             # Format age with gender if available
             formatted_age = patient_age
             if patient_gender and patient_age:
-                formatted_age = f"{patient_gender} / {patient_age}"
+                formatted_age = f"{patient_age} / {patient_gender}"
 
-            # Add extra top margin before header table
-            top_margin_para = doc.add_paragraph()
-            top_margin_para = doc.add_paragraph()
-            top_margin_para.space_after = Pt(40)  # Add 24pt spacing after paragraph
 
             # Create header with patient info - using a table for layout
             header_table = doc.add_table(rows=2, cols=2)
             header_table.autofit = False
             
             # Name and date (first row)
-            name_cell = header_table.cell(0, 0)
-            name_run = name_cell.paragraphs[0].add_run(patient_name)
+            name_cell = header_table.cell(0, 0)  # Reference the first cell in the first row
+            name_para = name_cell.paragraphs[0]
+            name_para.space_before = Pt(0)
+            name_para.space_after = Pt(0)
+            name_para.paragraph_format.line_spacing = Pt(34)
+
+            name_run = name_para.add_run(patient_name)
             name_run.bold = True
             name_run.font.size = Pt(12)
             
             date_cell = header_table.cell(0, 1)
             date_para = date_cell.paragraphs[0]
+            date_para.space_after = Pt(0)
             date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
             date_para.add_run(current_date)
+            date_para.paragraph_format.line_spacing = Pt(34)
             
             # Address and age (second row)
             addr_cell = header_table.cell(1, 0)
             addr_para = addr_cell.paragraphs[0]
+            addr_para.space_before = Pt(0) 
             addr_para.paragraph_format.left_indent = Inches(0.4)
             addr_para.add_run(patient_address)
+            addr_para.paragraph_format.line_spacing = Pt(10)
             
             age_cell = header_table.cell(1, 1)
             if formatted_age:
                 age_para = age_cell.paragraphs[0]
+                age_para.space_before = Pt(0)
                 age_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
                 age_para.add_run(formatted_age)
+                age_para.paragraph_format.line_spacing = Pt(10)
             
             
             # Add content based on print type
@@ -625,14 +632,17 @@ def open_print_dialog():
                         generic_para.paragraph_format.left_indent = Inches(0.5)
                         generic_run = generic_para.add_run(f" {generic}")
                         generic_run.bold = True
+                        generic_run.font.size = Pt(9)  # Set font size on run, not paragraph
                         
                         brand_para = doc.add_paragraph()
                         brand_para.paragraph_format.left_indent = Inches(0.6)
-                        brand_para.add_run(f"{brand} #{quantity}")
+                        brand_run = brand_para.add_run(f"{brand}           #{quantity}")
+                        brand_run.font.size = Pt(9)  # Set font size on run, not paragraph
                         
                         admin_para = doc.add_paragraph()
                         admin_para.paragraph_format.left_indent = Inches(0.6)
-                        admin_para.add_run(f"{admin}")
+                        admin_run = admin_para.add_run(f"{admin}")
+                        admin_run.font.size = Pt(9)  # Set font size on run, not paragraph
                         
                         # Add space between medications
                         if idx < len(tree_med.get_children()) - 1:
@@ -767,45 +777,51 @@ def print_document(print_type):
         # Format age with gender if available
         formatted_age = patient_age
         if patient_gender and patient_age:
-            formatted_age = f"{patient_gender} / {patient_age}"
-
-        # Add extra top margin before header table
-        top_margin_para = doc.add_paragraph()
-        top_margin_para = doc.add_paragraph()
-        top_margin_para.space_after = Pt(40)  # Add 24pt spacing after paragraph
+            formatted_age = f"{patient_age} / {patient_gender}"
 
         # Create header with patient info - using a table for layout
         header_table = doc.add_table(rows=2, cols=2)
         header_table.autofit = False
         
         # Name and date (first row)
-        name_cell = header_table.cell(0, 0)
-        name_run = name_cell.paragraphs[0].add_run(patient_name)
+        name_cell = header_table.cell(0, 0)  # Reference the first cell in the first row
+        name_para = name_cell.paragraphs[0]
+        name_para.space_before = Pt(0)
+        name_para.space_after = Pt(0)
+        name_para.paragraph_format.line_spacing = Pt(34)
+
+        name_run = name_para.add_run(patient_name)
         name_run.bold = True
         name_run.font.size = Pt(12)
         
         date_cell = header_table.cell(0, 1)
         date_para = date_cell.paragraphs[0]
+        date_para.space_after = Pt(0)
         date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
         date_para.add_run(current_date)
+        date_para.paragraph_format.line_spacing = Pt(34)
         
         # Address and age (second row)
         addr_cell = header_table.cell(1, 0)
         addr_para = addr_cell.paragraphs[0]
+        addr_para.space_before = Pt(0) 
         addr_para.paragraph_format.left_indent = Inches(0.4)
         addr_para.add_run(patient_address)
+        addr_para.paragraph_format.line_spacing = Pt(10)
         
         age_cell = header_table.cell(1, 1)
         if formatted_age:
             age_para = age_cell.paragraphs[0]
+            age_para.space_before = Pt(0)
             age_para.alignment = WD_ALIGN_PARAGRAPH.CENTER  # Changed from RIGHT to CENTER
             age_para.add_run(formatted_age)
+            age_para.paragraph_format.line_spacing = Pt(10)
         
         
         # Add content based on print type
         if selected_type == "Prescription":
             doc.add_paragraph()  # Empty space
-            
+             
             if tree_med.get_children():
                 for idx, item in enumerate(tree_med.get_children()):
                     values = tree_med.item(item)['values']
@@ -822,7 +838,7 @@ def print_document(print_type):
                     
                     brand_para = doc.add_paragraph()
                     brand_para.paragraph_format.left_indent = Inches(0.6)
-                    brand_para.add_run(f"{brand} #{quantity}")
+                    brand_para.add_run(f"{brand}           #{quantity}")
                     
                     admin_para = doc.add_paragraph()
                     admin_para.paragraph_format.left_indent = Inches(0.6)
@@ -1139,7 +1155,7 @@ btn_remove_queue = tk.Button(queue_frame, text="Unqueue", bg=WARNING_COLOR, fg=B
 btn_remove_queue.pack(side=tk.LEFT, padx=5)
 
 # ----------------- Remarks Section ----------------- #
-frame_remarks = tk.LabelFrame(content_frame, text="REMARKS & NOTES", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 12, "bold"))
+frame_remarks = tk.LabelFrame(content_frame, text="DIAGNOSIS", bg=SECONDARY_COLOR, fg=TEXT_COLOR, font=("Arial", 12, "bold"))
 frame_remarks.place(x=10, y=380, width=485, height=240) 
 
 text_remarks = tk.Text(frame_remarks, width=55, height=14)
